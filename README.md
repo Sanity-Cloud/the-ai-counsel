@@ -22,16 +22,7 @@ The AI Counsel is a **dual-mode multi-model AI deliberation system**. Instead of
 - **🏛️ LLM Council** — Multiple AI models independently answer your question, anonymously peer-review each other's responses, and a chairman model synthesizes the collective wisdom into a final answer.
 - **🎭 LLM Advisors** — Named advisor personas (The Skeptic, The Strategist, The Ethicist, etc.) debate your question across configurable rounds, reaching consensus or voting to deliver a structured verdict with an action plan.
 
-<p align="center">
-  <div align="center">
-    <a href="https://www.youtube.com/watch?v=HOdyIyccOCE" target="_blank">
-      <img src="https://img.youtube.com/vi/HOdyIyccOCE/hqdefault.jpg" alt="The AI Counsel Long Demo" width="48%">
-    </a>
-    <a href="https://www.youtube.com/watch?v=NUmQFGAwD3g" target="_blank">
-      <img src="https://img.youtube.com/vi/NUmQFGAwD3g/hqdefault.jpg" alt="The AI Counsel Short Demo" width="48%">
-    </a>
-  </div>
-</p>
+<!-- Demo videos coming soon -->
 
 ---
 

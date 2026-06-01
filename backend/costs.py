@@ -218,8 +218,11 @@ def _is_zero_cost_model(model_id: str, provider: str) -> Tuple[bool, Optional[st
     if provider == "openrouter" and native_id.endswith(":free"):
         return True, "free:openrouter"
 
-    if provider in ("opencode-zen", "opencode-go") and native_id in _OPENCODE_FREE_MODELS.get(provider, set()):
-        return True, "free:opencode"
+    if provider in ("opencode-zen", "opencode-go"):
+        if native_id in _OPENCODE_FREE_MODELS.get(provider, set()):
+            return True, "free:opencode"
+        if native_id.endswith("-free"):
+            return True, "free:opencode"
 
     if provider == "custom":
         try:
@@ -380,6 +383,18 @@ def _choose_ai_pricing_entry(
     return sorted(candidates, key=score, reverse=True)[0]
 
 
+_PROVIDER_PRICING_URLS: Dict[str, str] = {
+    "openai": "https://platform.openai.com/docs/pricing",
+    "anthropic": "https://platform.claude.com/docs/en/about-claude/pricing",
+    "google": "https://ai.google.dev/pricing",
+    "groq": "https://groq.com/pricing/",
+    "mistral": "https://docs.mistral.ai/getting-started/models/pricing/",
+    "deepseek": "https://platform.deepseek.com/docs/pricing",
+    "nvidia": "https://build.nvidia.com/pricing",
+    "openrouter": "https://openrouter.ai/models",
+}
+
+
 def _resolve_ai_model_pricing(
     data: Dict[str, Any],
     provider: str,
@@ -404,7 +419,7 @@ def _resolve_ai_model_pricing(
             "output_cost_per_1m": _to_float(entry.get("output_per_1m_tokens")),
             "cached_input_cost_per_1m": _to_float(entry.get("cached_input_per_1m_tokens")),
             "source": "catalog:ai-model-pricing",
-            "source_url": entry.get("source_url") or "https://ai-model-pricing.com/api/v1/pricing.json",
+            "source_url": _PROVIDER_PRICING_URLS.get(provider) or entry.get("source_url") or "https://ai-model-pricing.com/api/v1/pricing.json",
             "source_quality": entry.get("source_quality") or "catalog",
             "matched_model": model.get("model_id"),
             "matched_platform": entry.get("platform"),
@@ -510,7 +525,9 @@ def _build_opencode_call_cost(
     cached_cost = 0.0
     if cached_input_tokens and cached_price is not None:
         cached_cost = (cached_input_tokens * cached_price) / 1_000_000
-    output_cost = ((output_tokens or 0) * output_price) / 1_000_000
+    reasoning_tokens = base.get("reasoning_tokens") or 0
+    billable_output = (output_tokens or 0) + reasoning_tokens
+    output_cost = (billable_output * output_price) / 1_000_000
     total_cost = input_cost + cached_cost + output_cost
 
     note = "OpenCode Go is subscription-based; the per-1M price is shown for reference." if provider == "opencode-go" else None
@@ -625,7 +642,9 @@ async def estimate_call_cost(model_id: str, usage: Dict[str, Any]) -> Dict[str, 
     cached_cost = 0.0
     if cached_input_tokens and cached_price is not None:
         cached_cost = (cached_input_tokens * cached_price) / 1_000_000
-    output_cost = ((output_tokens or 0) * output_price) / 1_000_000
+    reasoning_tokens = normalized_usage.get("reasoning_tokens") or 0
+    billable_output = (output_tokens or 0) + reasoning_tokens
+    output_cost = (billable_output * output_price) / 1_000_000
     total_cost = input_cost + cached_cost + output_cost
 
     is_zero = input_price == 0 and output_price == 0 and (cached_price in (None, 0))

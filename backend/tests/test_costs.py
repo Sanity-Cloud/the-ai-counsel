@@ -205,3 +205,117 @@ def test_opencode_provider_prefix_is_recognized():
     assert costs.provider_for_model("opencode-zen:glm-5") == "opencode-zen"
     assert costs.provider_for_model("opencode-go:kimi-k2.5") == "opencode-go"
     assert costs.provider_model_id("opencode-zen:glm-5") == "glm-5"
+
+
+@pytest.mark.asyncio
+async def test_opencode_free_suffix_detection():
+    """Any opencode-zen or opencode-go model ending in -free should be marked $0.
+
+    Regression for `minimax-m3-free` and other models added upstream after
+    the hardcoded free-list was last updated.
+    """
+    cost = await costs.estimate_call_cost(
+        "opencode-zen:minimax-m3-free",
+        {"prompt_tokens": 100, "completion_tokens": 50, "reasoning_tokens": 30},
+    )
+    assert cost["total_cost"] == 0.0
+    assert cost["cost_status"] == "free"
+    assert cost["pricing_source"] == "free:opencode"
+
+    cost2 = await costs.estimate_call_cost(
+        "opencode-zen:some-future-model-free",
+        {"prompt_tokens": 200, "completion_tokens": 100},
+    )
+    assert cost2["total_cost"] == 0.0
+    assert cost2["cost_status"] == "free"
+
+
+@pytest.mark.asyncio
+async def test_opencode_reasoning_tokens_billed(monkeypatch):
+    """OpenCode call cost should include reasoning_tokens in the billable output."""
+    monkeypatch.setattr(costs, "_OPENCODE_PRICING", {
+        "opencode-zen": {
+            "test-model": {"input": 1.00, "output": 4.00, "cached": 0.10},
+        },
+        "opencode-go": {},
+    })
+
+    cost = await costs.estimate_call_cost(
+        "opencode-zen:test-model",
+        {
+            "prompt_tokens": 100,
+            "completion_tokens": 50,
+            "completion_tokens_details": {"reasoning_tokens": 200},
+        },
+    )
+    assert cost["reasoning_tokens"] == 200
+    # billable_output = 50 + 200 = 250 → 250 × $4.00/M = $0.001000
+    assert cost["output_cost"] == pytest.approx(0.001, rel=1e-6)
+    # input = 100 × $1.00/M = $0.000100
+    assert cost["input_cost"] == pytest.approx(0.0001, rel=1e-6)
+    # total = $0.000100 + $0.001 = $0.0011
+    assert cost["total_cost"] == pytest.approx(0.0011, rel=1e-6)
+
+
+@pytest.mark.asyncio
+async def test_catalog_reasoning_tokens_billed(monkeypatch):
+    """Catalog-path cost should include reasoning_tokens in the billable output."""
+    async def fake_pricing(provider, native_id, input_tokens):
+        return {
+            "input_cost_per_1m": 1.00,
+            "output_cost_per_1m": 4.00,
+            "cached_input_cost_per_1m": 0.10,
+            "source": "catalog:test",
+            "source_url": "https://example.com/pricing",
+        }
+    monkeypatch.setattr(costs, "_resolve_catalog_pricing", fake_pricing)
+
+    cost = await costs.estimate_call_cost(
+        "google:test-model",
+        {
+            "prompt_tokens": 100,
+            "completion_tokens": 50,
+            "thoughtsTokenCount": 75,
+        },
+    )
+    assert cost["reasoning_tokens"] == 75
+    # billable_output = 50 + 75 = 125 → 125 × $4.00/M = $0.000500
+    assert cost["output_cost"] == pytest.approx(0.0005, rel=1e-6)
+
+
+@pytest.mark.asyncio
+async def test_catalog_source_url_overridden_by_provider(monkeypatch):
+    """When the catalog entry's source_url is for a different platform than the
+    provider we're actually using, the provider-specific URL should win.
+    Regression: Gemini catalog entry had openrouter.ai/models URL.
+    """
+    fake_data = {
+        "models": [
+            {
+                "model_id": "gemini-test",
+                "aliases": {"openrouter": "google/gemini-test"},
+                "pricing": [
+                    {
+                        "modality": "text",
+                        "platform": "openrouter",
+                        "tier": "standard",
+                        "input_per_1m_tokens": 0.50,
+                        "output_per_1m_tokens": 3.00,
+                        "source_url": "https://openrouter.ai/models",
+                    },
+                ],
+            },
+        ],
+    }
+    resolved = costs._resolve_ai_model_pricing(fake_data, "google", "gemini-test", None)
+    assert resolved is not None
+    assert resolved["source_url"] == "https://ai.google.dev/pricing"
+
+    anthropic_resolved = costs._resolve_ai_model_pricing(fake_data, "anthropic", "anthropic-missing", None)
+    assert anthropic_resolved is None
+
+    openrouter_resolved = costs._resolve_ai_model_pricing(
+        fake_data, "openrouter", "google/gemini-test", None,
+    )
+    assert openrouter_resolved is not None
+    assert openrouter_resolved["source_url"] == "https://openrouter.ai/models"

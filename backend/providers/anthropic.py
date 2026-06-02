@@ -3,6 +3,7 @@
 import httpx
 from typing import List, Dict, Any
 from .base import LLMProvider
+from .temperature import add_temperature_if_supported
 from ..settings import get_settings
 
 class AnthropicProvider(LLMProvider):
@@ -36,8 +37,8 @@ class AnthropicProvider(LLMProvider):
                     "model": model,
                     "messages": filtered_messages,
                     "max_tokens": 4096,
-                    "temperature": temperature
                 }
+                add_temperature_if_supported(payload, model, "anthropic", temperature)
                 if system_message:
                     payload["system"] = system_message
                     

@@ -3,6 +3,7 @@
 import httpx
 from typing import List, Dict, Any
 from .base import LLMProvider
+from .temperature import add_temperature_if_supported
 from ..settings import get_settings
 
 class OpenAIProvider(LLMProvider):
@@ -24,17 +25,22 @@ class OpenAIProvider(LLMProvider):
         
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
+                payload = add_temperature_if_supported(
+                    {
+                        "model": model,
+                        "messages": messages,
+                    },
+                    model,
+                    "openai",
+                    temperature,
+                )
                 response = await client.post(
                     f"{self.BASE_URL}/chat/completions",
                     headers={
                         "Authorization": f"Bearer {api_key}",
                         "Content-Type": "application/json"
                     },
-                    json={
-                        "model": model,
-                        "messages": messages,
-                        "temperature": 1.0 if any(x in model for x in ["gpt-5.1", "o1-", "o3-"]) else temperature
-                    }
+                    json=payload
                 )
                 
                 if response.status_code != 200:

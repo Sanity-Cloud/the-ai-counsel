@@ -3,6 +3,7 @@
 from typing import List, Dict, Any, Tuple
 import asyncio
 import logging
+import re
 from . import openrouter
 from . import ollama_client
 from .config import get_council_models, get_chairman_model
@@ -10,6 +11,10 @@ from .costs import attach_cost
 from .settings import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+THINK_BLOCK_RE = re.compile(r"<think\b[^>]*>[\s\S]*?</think>", re.IGNORECASE)
+UNCLOSED_THINK_RE = re.compile(r"<think\b[^>]*>[\s\S]*$", re.IGNORECASE)
 
 
 from .providers.openai import OpenAIProvider
@@ -88,6 +93,34 @@ async def query_models_parallel(models: List[str], messages: List[Dict[str, str]
     results = await asyncio.gather(*tasks)
     
     return dict(results)
+
+
+def clean_generated_short_text(text: str, fallback: str = "Untitled Conversation", max_length: int = 50) -> str:
+    """Clean model-generated labels such as titles and search queries."""
+
+    cleaned = str(text or "").strip()
+    cleaned = THINK_BLOCK_RE.sub("", cleaned)
+    cleaned = UNCLOSED_THINK_RE.sub("", cleaned)
+    cleaned = " ".join(cleaned.replace("\r", " ").replace("\n", " ").split())
+    cleaned = cleaned.strip(" \"'`“”‘’.,;:-")
+    cleaned = re.sub(r"^\s*(?:title|search query)\s*:\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = cleaned.strip(" \"'`“”‘’.,;:-")
+
+    if not cleaned:
+        cleaned = str(fallback or "").strip()
+        cleaned = THINK_BLOCK_RE.sub("", cleaned)
+        cleaned = UNCLOSED_THINK_RE.sub("", cleaned)
+        cleaned = " ".join(cleaned.replace("\r", " ").replace("\n", " ").split())
+        cleaned = cleaned.strip(" \"'`“”‘’.,;:-")
+        cleaned = re.sub(r"^\s*(?:title|search query)\s*:\s*", "", cleaned, flags=re.IGNORECASE)
+        cleaned = cleaned.strip(" \"'`“”‘’.,;:-")
+
+    if not cleaned:
+        cleaned = "Untitled Conversation"
+
+    if len(cleaned) > max_length:
+        cleaned = cleaned[: max_length - 3].rstrip(" \"'`“”‘’.,;:-") + "..."
+    return cleaned
 
 
 async def stage1_collect_responses(
@@ -665,8 +698,7 @@ async def generate_conversation_title(user_query: str) -> str:
         prompt = prompt_template.format(user_query=user_query)
     except Exception as e:
         logger.warning(f"Error formatting title prompt: {e}. Using fallback.")
-        title = user_query.strip()
-        return title[:47] + "..." if len(title) > 50 else title
+        return clean_generated_short_text(user_query)
 
     chairman_model = get_chairman_model()
     messages = [{"role": "user", "content": prompt}]
@@ -674,24 +706,14 @@ async def generate_conversation_title(user_query: str) -> str:
     try:
         response = await query_model(chairman_model, messages, temperature=0.3)
         if response and not response.get('error'):
-            title = response.get('content', '').strip()
-            # Clean up quotes
-            title = title.strip('"\'')
-            if len(title) > 50:
-                title = title[:47] + "..."
+            title = clean_generated_short_text(response.get('content', ''), fallback=user_query)
             if title:
                 return title
     except Exception as e:
         logger.error(f"Error generating title: {e}")
 
     # Simple heuristic fallback
-    title = user_query.strip()
-    if not title:
-        return "Untitled Conversation"
-    title = title.strip('"\'')
-    if len(title) > 50:
-        title = title[:47] + "..."
-    return title
+    return clean_generated_short_text(user_query)
 
 
 async def generate_search_query(user_query: str) -> str:
@@ -720,11 +742,9 @@ async def generate_search_query(user_query: str) -> str:
     try:
         response = await query_model(chairman_model, messages, temperature=0.1)
         if response and not response.get('error'):
-            query = response.get('content', '').strip()
-            # Clean up quotes and conversational text if any leaked
-            query = query.strip('"\'')
+            query = clean_generated_short_text(response.get('content', ''), fallback=user_query, max_length=100)
             if query:
-                return query[:100]
+                return query
     except Exception as e:
         logger.error(f"Error generating search query: {e}")
 

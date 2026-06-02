@@ -34,6 +34,7 @@ _active_runs: Dict[str, Dict[str, Any]] = {}
 
 def _register_run(conversation_id: str, execution_mode: str) -> None:
     _active_runs[conversation_id] = {
+        "mode": "council",
         "stage": "initializing",
         "execution_mode": execution_mode,
         "progress": {
@@ -41,6 +42,150 @@ def _register_run(conversation_id: str, execution_mode: str) -> None:
             "stage2": {"total": 0},
         },
     }
+
+
+def _register_advisor_run(conversation_id: str, body: "StartDebateRequest") -> None:
+    web_search_used = bool(body.search_provider or body.web_search)
+    _active_runs[conversation_id] = {
+        "mode": "advisors",
+        "stage": "initializing",
+        "question": body.question,
+        "web_search": web_search_used,
+        "search_provider": body.search_provider,
+        "personas": [],
+        "rounds": [],
+        "current_round": 0,
+        "max_rounds": body.max_rounds,
+        "verdict": None,
+        "tiebreaker": None,
+        "consensus_reached": False,
+        "error": None,
+        "metadata": {
+            "persona_ids": body.persona_ids,
+            "default_model": body.default_model,
+            "tiebreaker_model": body.tiebreaker_model,
+            "model_assignments": body.model_assignments,
+            "max_rounds": body.max_rounds,
+            "web_search": web_search_used,
+        },
+        "progress": {
+            "advisor": {"round": 0, "max_rounds": body.max_rounds, "count": 0, "total": 0},
+        },
+    }
+
+
+def _advisor_round_number(event: Dict[str, Any]) -> int:
+    data = event.get("data") or {}
+    return int(event.get("round") or data.get("round_number") or 1)
+
+
+def _ensure_advisor_round(run: Dict[str, Any], round_number: int) -> Dict[str, Any]:
+    rounds = run.setdefault("rounds", [])
+    while len(rounds) < round_number:
+        next_round = len(rounds) + 1
+        rounds.append({
+            "round": next_round,
+            "round_number": next_round,
+            "responses": [],
+            "complete": False,
+        })
+    return rounds[round_number - 1]
+
+
+def _upsert_advisor_response(round_data: Dict[str, Any], response: Dict[str, Any]) -> None:
+    responses = round_data.setdefault("responses", [])
+    persona_id = response.get("persona_id")
+    if persona_id:
+        for idx, existing in enumerate(responses):
+            if existing.get("persona_id") == persona_id:
+                responses[idx] = response
+                return
+    responses.append(response)
+
+
+def _update_advisor_run(conversation_id: str, event: Dict[str, Any]) -> None:
+    run = _active_runs.get(conversation_id)
+    if not run or run.get("mode") != "advisors":
+        return
+
+    event_type = event.get("type", "")
+    data = event.get("data") or {}
+    progress = run.setdefault("progress", {}).setdefault("advisor", {})
+
+    if event_type == "advisor_search_start":
+        run["stage"] = "search"
+    elif event_type == "advisor_search_complete":
+        run["stage"] = "search_complete"
+        run.setdefault("metadata", {})["search_query"] = data.get("search_query")
+    elif event_type == "advisor_debate_start":
+        run["stage"] = "debate"
+        run["personas"] = data.get("personas") or run.get("personas") or []
+        run["max_rounds"] = data.get("max_rounds") or run.get("max_rounds")
+        run["question"] = data.get("question") or run.get("question")
+        run["web_search"] = data.get("web_search", run.get("web_search"))
+        progress["max_rounds"] = run["max_rounds"]
+    elif event_type == "advisor_round_start":
+        round_number = _advisor_round_number(event)
+        run["stage"] = "round"
+        run["current_round"] = round_number
+        _ensure_advisor_round(run, round_number)
+        progress.update({
+            "round": round_number,
+            "max_rounds": run.get("max_rounds"),
+            "count": 0,
+            "total": len(data.get("order") or []),
+        })
+    elif event_type == "advisor_response":
+        round_number = _advisor_round_number(event)
+        run["stage"] = "round"
+        run["current_round"] = round_number
+        round_data = _ensure_advisor_round(run, round_number)
+        if isinstance(data, dict):
+            _upsert_advisor_response(round_data, data)
+        progress.update({
+            "round": round_number,
+            "max_rounds": run.get("max_rounds"),
+            "count": event.get("count", len(round_data.get("responses", []))),
+            "total": event.get("total", progress.get("total", 0)),
+        })
+    elif event_type == "advisor_round_complete":
+        round_number = _advisor_round_number(event)
+        run["stage"] = "round_complete"
+        run["current_round"] = round_number
+        round_data = _ensure_advisor_round(run, round_number)
+        if isinstance(data.get("responses"), list):
+            round_data["responses"] = data["responses"]
+        round_data["complete"] = True
+        round_data["consensus_reached"] = bool(data.get("consensus_reached"))
+        round_data["average_consensus_score"] = data.get("average_consensus_score")
+        run["consensus_reached"] = bool(data.get("consensus_reached"))
+        progress.update({
+            "round": round_number,
+            "max_rounds": run.get("max_rounds"),
+            "count": len(round_data.get("responses", [])),
+            "total": progress.get("total", len(round_data.get("responses", []))),
+        })
+    elif event_type == "advisor_tiebreaker_start":
+        run["stage"] = "tiebreaker"
+    elif event_type == "advisor_tiebreaker":
+        run["stage"] = "tiebreaker"
+        run["tiebreaker"] = data
+    elif event_type == "advisor_verdict_start":
+        run["stage"] = "verdict"
+    elif event_type == "advisor_verdict":
+        run["stage"] = "verdict"
+        run["verdict"] = data
+    elif event_type == "advisor_complete":
+        run["stage"] = "complete"
+        run["rounds"] = data.get("rounds") or run.get("rounds") or []
+        run["verdict"] = data.get("verdict") or run.get("verdict")
+        run["tiebreaker"] = data.get("tiebreaker")
+        run["personas"] = data.get("personas") or run.get("personas") or []
+        run["consensus_reached"] = bool(data.get("consensus_reached"))
+        run.setdefault("metadata", {})["cost_report"] = data.get("cost_report")
+    elif event_type == "advisor_error":
+        run["stage"] = "error"
+        run["error"] = event.get("message", "Advisor debate failed")
 
 
 def _save_partial_results(
@@ -437,10 +582,30 @@ async def get_conversation_progress(conversation_id: str):
     run = _active_runs.get(conversation_id)
     if run is None:
         return {"active": False}
+    if run.get("mode") == "advisors":
+        return {
+            "active": True,
+            "mode": "advisors",
+            "stage": run.get("stage", "initializing"),
+            "progress": run.get("progress", {}),
+            "question": run.get("question"),
+            "web_search": run.get("web_search"),
+            "search_provider": run.get("search_provider"),
+            "personas": run.get("personas") or [],
+            "rounds": run.get("rounds") or [],
+            "current_round": run.get("current_round") or 0,
+            "max_rounds": run.get("max_rounds"),
+            "verdict": run.get("verdict"),
+            "tiebreaker": run.get("tiebreaker"),
+            "consensus_reached": run.get("consensus_reached", False),
+            "error": run.get("error"),
+            "metadata": run.get("metadata") or {},
+        }
     s1 = run.get("stage1_responses") or []
     s2 = run.get("stage2_responses") or []
     return {
         "active": True,
+        "mode": "council",
         "stage": run["stage"],
         "execution_mode": run["execution_mode"],
         "progress": {
@@ -962,15 +1127,21 @@ async def start_debate_stream(conversation_id: str, body: StartDebateRequest, re
     is_first_message = len(conversation["messages"]) == 0
 
     async def event_generator():
+        _register_advisor_run(conversation_id, body)
         try:
+            conversation["mode"] = "advisors"
             storage.add_user_message(conversation_id, body.question, conversation=conversation)
 
             search_context = ""
             if body.search_provider or body.web_search:
                 settings = get_settings()
-                yield f"data: {json.dumps({'type': 'advisor_search_start'})}\n\n"
+                event = {"type": "advisor_search_start"}
+                _update_advisor_run(conversation_id, event)
+                yield f"data: {json.dumps(event)}\n\n"
                 search_context, search_query, _ = await _fetch_search_context(body.question, settings, body.search_provider)
-                yield f"data: {json.dumps({'type': 'advisor_search_complete', 'data': {'search_query': search_query}})}\n\n"
+                event = {"type": "advisor_search_complete", "data": {"search_query": search_query}}
+                _update_advisor_run(conversation_id, event)
+                yield f"data: {json.dumps(event)}\n\n"
 
             all_rounds = []
             verdict_data = None
@@ -992,6 +1163,7 @@ async def start_debate_stream(conversation_id: str, body: StartDebateRequest, re
                 preflight=True,
             ):
                 event_type = event.get("type", "")
+                _update_advisor_run(conversation_id, event)
 
                 if event_type == "advisor_complete":
                     all_rounds = event["data"]["rounds"]
@@ -1046,7 +1218,11 @@ async def start_debate_stream(conversation_id: str, body: StartDebateRequest, re
         except Exception as e:
             logger.error(f"Debate stream error: {e}")
             storage.add_error_message(conversation_id, f"Debate error: {str(e)}")
-            yield f"data: {json.dumps({'type': 'advisor_error', 'message': str(e)})}\n\n"
+            event = {"type": "advisor_error", "message": str(e)}
+            _update_advisor_run(conversation_id, event)
+            yield f"data: {json.dumps(event)}\n\n"
+        finally:
+            _active_runs.pop(conversation_id, None)
 
     return StreamingResponse(
         event_generator(),

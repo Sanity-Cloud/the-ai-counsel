@@ -4,6 +4,7 @@ import asyncio
 import httpx
 from typing import List, Dict, Any, Optional
 from .config import get_openrouter_api_key, OPENROUTER_API_URL
+from .providers.temperature import add_temperature_if_supported
 
 # Retry configuration
 MAX_RETRIES = 2
@@ -41,11 +42,15 @@ async def query_model(
         "Content-Type": "application/json",
     }
 
-    payload = {
-        "model": model,
-        "messages": messages,
-        "temperature": temperature
-    }
+    payload = add_temperature_if_supported(
+        {
+            "model": model,
+            "messages": messages,
+        },
+        model,
+        "openrouter",
+        temperature,
+    )
 
     last_error = None
 

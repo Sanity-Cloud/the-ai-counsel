@@ -1,6 +1,10 @@
 import React, { useState } from 'react';
 import './Sidebar.css';
 
+const getConversationMode = (conversation) => (
+  conversation?.mode === 'advisors' ? 'advisors' : 'council'
+);
+
 export default function Sidebar({
   conversations,
   currentConversationId,
@@ -124,53 +128,56 @@ export default function Sidebar({
             {searchQuery ? 'No matching conversations' : 'No history'}
           </div>
         ) : (
-          filteredConversations.map((conv) => (
-            <div
-              key={conv.id}
-              className={`conversation-item ${conv.id === currentConversationId ? 'active' : ''}`}
-              onClick={() => onSelectConversation(conv.id)}
-            >
-              <div className="conversation-title">
-                <span className={`conv-mode-tag conv-mode-tag--${conv.mode === 'advisors' ? 'advisors' : 'council'}`}>
-                  {conv.mode === 'advisors' ? 'ADV' : 'CNC'}
-                </span>
-                {conv.title || 'New Conversation'}
-              </div>
-              <div className="conversation-meta">
-                <span>{new Date(conv.created_at).toLocaleDateString()}</span>
-                {isLoading && conv.id === currentConversationId ? (
-                  <button className="stop-generation-btn small" onClick={handleAbortClick}>
-                    Stop
-                  </button>
-                ) : confirmingDelete === conv.id ? (
-                  <div className="delete-confirm">
-                    <button
-                      className="confirm-yes-btn"
-                      onClick={(e) => handleConfirmDelete(e, conv.id)}
-                      title="Confirm delete"
-                    >
-                      ✓
+          filteredConversations.map((conv) => {
+            const mode = getConversationMode(conv);
+            return (
+              <div
+                key={conv.id}
+                className={`conversation-item conversation-item--${mode} ${conv.id === currentConversationId ? 'active' : ''}`}
+                onClick={() => onSelectConversation(conv.id)}
+              >
+                <div className="conversation-title">
+                  <span className={`conv-mode-tag conv-mode-tag--${mode}`}>
+                    {mode === 'advisors' ? 'ADV' : 'CNC'}
+                  </span>
+                  {conv.title || 'New Conversation'}
+                </div>
+                <div className="conversation-meta">
+                  <span>{new Date(conv.created_at).toLocaleDateString()}</span>
+                  {isLoading && conv.id === currentConversationId ? (
+                    <button className="stop-generation-btn small" onClick={handleAbortClick}>
+                      Stop
                     </button>
+                  ) : confirmingDelete === conv.id ? (
+                    <div className="delete-confirm">
+                      <button
+                        className="confirm-yes-btn"
+                        onClick={(e) => handleConfirmDelete(e, conv.id)}
+                        title="Confirm delete"
+                      >
+                        ✓
+                      </button>
+                      <button
+                        className="confirm-no-btn"
+                        onClick={handleCancelDelete}
+                        title="Cancel"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ) : (
                     <button
-                      className="confirm-no-btn"
-                      onClick={handleCancelDelete}
-                      title="Cancel"
+                      className="delete-btn"
+                      onClick={(e) => handleDeleteClick(e, conv.id)}
+                      title="Delete conversation"
                     >
-                      ✕
+                      🗑️
                     </button>
-                  </div>
-                ) : (
-                  <button
-                    className="delete-btn"
-                    onClick={(e) => handleDeleteClick(e, conv.id)}
-                    title="Delete conversation"
-                  >
-                    🗑️
-                  </button>
-                )}
+                  )}
+                </div>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
     </div>

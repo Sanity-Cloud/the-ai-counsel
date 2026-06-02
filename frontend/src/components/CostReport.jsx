@@ -15,6 +15,10 @@ function formatTokens(value) {
   return numberFormatter.format(value);
 }
 
+function formatTokenBreakdown(item) {
+  return `${formatTokens(item.input_tokens)} in / ${formatTokens(item.output_tokens)} out`;
+}
+
 function rowCostLabel(row) {
   return formatUsd(row.total_cost, row.known_cost_calls === 0 && row.unknown_cost_calls > 0);
 }
@@ -46,7 +50,11 @@ export default function CostReport({ report, title = 'Run Cost' }) {
           <div className="cost-report__total">{formatUsd(report.total_cost, unknownTotal)}</div>
         </div>
         <div className="cost-report__metrics" aria-label="Cost metrics">
-          <span>{formatTokens(report.total_tokens)} tokens</span>
+          <span title="Provider-reported total tokens when available, otherwise input plus output tokens.">
+            {formatTokens(report.total_tokens)} total tokens
+          </span>
+          <span title="Input tokens">{formatTokens(report.input_tokens)} in</span>
+          <span title="Output tokens">{formatTokens(report.output_tokens)} out</span>
           <span>{report.total_calls || 0} calls</span>
           <span className={`cost-report__status ${report.has_unknown_costs ? 'unknown' : report.has_estimates ? 'estimated' : 'known'}`}>
             {statusText}
@@ -68,7 +76,10 @@ export default function CostReport({ report, title = 'Run Cost' }) {
             <div className="cost-report__row" role="row" key={row.name}>
               <span className="cost-report__model" role="cell" title={row.name}>{row.name}</span>
               <span role="cell">{row.calls || 0}</span>
-              <span role="cell">{formatTokens(row.total_tokens)}</span>
+              <span className="cost-report__tokens" role="cell" title={formatTokenBreakdown(row)}>
+                <span>{formatTokens(row.total_tokens)}</span>
+                <small>{formatTokenBreakdown(row)}</small>
+              </span>
               <span role="cell">{rowCostLabel(row)}</span>
               <span role="cell" className={`cost-report__source ${rowStatus(row).toLowerCase().replace(' ', '-')}`}>
                 {rowStatus(row)}

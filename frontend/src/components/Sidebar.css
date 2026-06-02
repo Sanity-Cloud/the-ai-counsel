@@ -262,6 +262,16 @@
   box-shadow: 0 0 24px rgba(59, 130, 246, 0.18);
 }
 
+.conversation-item--advisors:hover {
+  border-color: rgba(139, 92, 246, 0.32);
+}
+
+.conversation-item--advisors.active {
+  background: rgba(139, 92, 246, 0.16);
+  border-color: rgba(139, 92, 246, 0.5);
+  box-shadow: 0 0 24px rgba(139, 92, 246, 0.18);
+}
+
 .sidebar-empty-state {
   text-align: center;
   color: var(--text-muted);

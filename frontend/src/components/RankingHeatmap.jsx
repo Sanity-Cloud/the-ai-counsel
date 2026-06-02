@@ -79,7 +79,7 @@ export default function RankingHeatmap({ rankings, labelToModel }) {
                       <span className="mini-avatar" style={{ backgroundColor: visuals.color }}>
                         {visuals.icon}
                       </span>
-                      <span className="col-name-text">{short}</span>
+                      <span className="col-name-text" title={short}>{short}</span>
                     </div>
                   </th>
                 );
@@ -97,7 +97,7 @@ export default function RankingHeatmap({ rankings, labelToModel }) {
                       <span className="mini-avatar" style={{ backgroundColor: rankerVisuals.color }}>
                         {rankerVisuals.icon}
                       </span>
-                      <span className="row-name-text">{rankerShort}</span>
+                      <span className="row-name-text" title={rankerShort}>{rankerShort}</span>
                     </div>
                   </td>
                   {rankeeModels.map((rankee) => {

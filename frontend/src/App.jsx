@@ -39,6 +39,51 @@ class AppErrorBoundary extends Component {
   }
 }
 
+const getConversationMode = (conversation) => (
+  conversation?.mode === 'advisors' ? 'advisors' : 'council'
+);
+
+const isAdvisorMessage = (message) => (
+  message?.mode === 'advisors' || message?.type === 'advisor_debate'
+);
+
+const normalizeAdvisorRound = (roundData = {}, index = 0) => {
+  const roundNumber = roundData.round || roundData.round_number || index + 1;
+  return {
+    ...roundData,
+    round: roundNumber,
+    round_number: roundNumber,
+    responses: Array.isArray(roundData.responses) ? roundData.responses : [],
+    complete: Boolean(roundData.complete || roundData.consensus_reached),
+  };
+};
+
+const buildAdvisorProgressMessage = (progress, existing = {}) => {
+  const metadata = {
+    ...(existing.metadata || {}),
+    ...(progress.metadata || {}),
+  };
+
+  return {
+    role: 'assistant',
+    type: 'advisor_debate',
+    mode: 'advisors',
+    isRunning: true,
+    currentRound: progress.current_round || existing.currentRound || 0,
+    maxRounds: progress.max_rounds || existing.maxRounds || metadata.max_rounds || 3,
+    question: progress.question || existing.question || '',
+    webSearch: progress.search_provider || progress.web_search || existing.webSearch || null,
+    personas: progress.personas || existing.personas || [],
+    rounds: (progress.rounds || existing.rounds || []).map(normalizeAdvisorRound),
+    verdict: progress.verdict || existing.verdict || null,
+    tiebreaker: progress.tiebreaker || existing.tiebreaker || null,
+    consensusReached: progress.consensus_reached ?? existing.consensusReached ?? false,
+    error: progress.error || existing.error || null,
+    metadata,
+    externalRun: true,
+  };
+};
+
 function App() {
   const [conversations, setConversations] = useState([]);
   const [currentConversationId, setCurrentConversationId] = useState(null);
@@ -297,7 +342,10 @@ function App() {
   const loadConversations = async (retryCount = 0) => {
     try {
       const convs = await api.listConversations();
-      setConversations(convs);
+      setConversations(convs.map((conv) => ({
+        ...conv,
+        mode: getConversationMode(conv),
+      })));
     } catch (error) {
       console.error('Failed to load conversations:', error);
       // Retry up to 3 times with increasing delays (1s, 2s, 3s)
@@ -312,7 +360,9 @@ function App() {
       const conv = await api.getConversation(id);
       // Only apply if no newer optimistic update has occurred since we started
       if (conversationVersionRef.current === expectedVersion) {
-        setCurrentConversation(conv);
+        const normalized = { ...conv, mode: getConversationMode(conv) };
+        setCurrentConversation(normalized);
+        setAppMode(getConversationMode(normalized));
       }
     } catch (error) {
       console.error('Failed to load conversation:', error);
@@ -346,33 +396,63 @@ function App() {
     stage4: stage === 'stage4',
   });
 
+  const applyAdvisorProgress = (conversationId, progress) => {
+    setAppMode('advisors');
+    setIsLoading(true);
+    setCurrentConversation(prev => {
+      if (!prev || prev.id !== conversationId) return prev;
+      const messages = [...(prev.messages || [])];
+      const lastIdx = messages.length - 1;
+      const lastMsg = messages[lastIdx];
+      const liveMessage = buildAdvisorProgressMessage(progress, isAdvisorMessage(lastMsg) ? lastMsg : {});
+
+      if (isAdvisorMessage(lastMsg)) {
+        messages[lastIdx] = liveMessage;
+      } else {
+        if (lastMsg?.role !== 'user' && progress.question) {
+          messages.push({ role: 'user', content: progress.question });
+        }
+        messages.push(liveMessage);
+      }
+
+      return { ...prev, mode: 'advisors', messages };
+    });
+  };
+
   const checkForActiveRun = async (conversationId) => {
     stopProgressPolling();
     try {
       const progress = await api.getConversationProgress(conversationId);
       if (!progress.active) return;
 
-      setCurrentConversation(prev => {
-        if (!prev || prev.id !== conversationId) return prev;
-        const messages = [...prev.messages];
-        const lastMsg = messages[messages.length - 1];
-        if (lastMsg?.role === 'user') {
-          messages.push({
-            role: 'assistant',
-            stage1: progress.stage1 || null,
-            stage2: progress.stage2 || null,
-            stage3: progress.stage3 || null,
-            loading: loadingFlagsFromStage(progress.stage),
-            progress: progress.progress || {},
-            metadata: {
-              execution_mode: progress.execution_mode,
-              stage4: progress.stage4 || null,
-            },
-            externalRun: true,
-          });
-        }
-        return { ...prev, messages };
-      });
+      if (progress.mode === 'advisors') {
+        applyAdvisorProgress(conversationId, progress);
+      } else {
+        setAppMode('council');
+        setIsLoading(true);
+
+        setCurrentConversation(prev => {
+          if (!prev || prev.id !== conversationId) return prev;
+          const messages = [...prev.messages];
+          const lastMsg = messages[messages.length - 1];
+          if (lastMsg?.role === 'user') {
+            messages.push({
+              role: 'assistant',
+              stage1: progress.stage1 || null,
+              stage2: progress.stage2 || null,
+              stage3: progress.stage3 || null,
+              loading: loadingFlagsFromStage(progress.stage),
+              progress: progress.progress || {},
+              metadata: {
+                execution_mode: progress.execution_mode,
+                stage4: progress.stage4 || null,
+              },
+              externalRun: true,
+            });
+          }
+          return { ...prev, mode: 'council', messages };
+        });
+      }
 
       let inFlight = false;
       progressPollRef.current = setInterval(async () => {
@@ -382,31 +462,36 @@ function App() {
           const p = await api.getConversationProgress(conversationId);
           if (!p.active) {
             stopProgressPolling();
+            setIsLoading(false);
             const versionAtReload = conversationVersionRef.current;
             await loadConversation(conversationId, versionAtReload);
             loadConversations();
             return;
           }
-          setCurrentConversation(prev => {
-            if (!prev || prev.id !== conversationId) return prev;
-            const messages = [...prev.messages];
-            const lastIdx = messages.length - 1;
-            if (lastIdx >= 0 && messages[lastIdx]?.externalRun) {
-              messages[lastIdx] = {
-                ...messages[lastIdx],
-                stage1: p.stage1 || messages[lastIdx].stage1,
-                stage2: p.stage2 || messages[lastIdx].stage2,
-                stage3: p.stage3 || messages[lastIdx].stage3,
-                loading: loadingFlagsFromStage(p.stage),
-                progress: p.progress || messages[lastIdx].progress,
-                metadata: {
-                  ...messages[lastIdx].metadata,
-                  stage4: p.stage4 || messages[lastIdx].metadata?.stage4,
-                }
-              };
-            }
-            return { ...prev, messages };
-          });
+          if (p.mode === 'advisors') {
+            applyAdvisorProgress(conversationId, p);
+          } else {
+            setCurrentConversation(prev => {
+              if (!prev || prev.id !== conversationId) return prev;
+              const messages = [...prev.messages];
+              const lastIdx = messages.length - 1;
+              if (lastIdx >= 0 && messages[lastIdx]?.externalRun) {
+                messages[lastIdx] = {
+                  ...messages[lastIdx],
+                  stage1: p.stage1 || messages[lastIdx].stage1,
+                  stage2: p.stage2 || messages[lastIdx].stage2,
+                  stage3: p.stage3 || messages[lastIdx].stage3,
+                  loading: loadingFlagsFromStage(p.stage),
+                  progress: p.progress || messages[lastIdx].progress,
+                  metadata: {
+                    ...messages[lastIdx].metadata,
+                    stage4: p.stage4 || messages[lastIdx].metadata?.stage4,
+                  }
+                };
+              }
+              return { ...prev, mode: 'council', messages };
+            });
+          }
         } catch {
           // Poll errors are expected during network blips
         } finally {
@@ -434,12 +519,16 @@ function App() {
   };
 
   const handleSelectConversation = (id) => {
-    abortAllStreams();
+    stopProgressPolling();
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
     setIsLoading(false);
     setCurrentConversationId(id);
     // Auto-switch mode based on conversation mode
     const conv = conversations.find(c => c.id === id);
-    if (conv?.mode === 'advisors') {
+    if (getConversationMode(conv) === 'advisors') {
       setAppMode('advisors');
     } else {
       setAppMode('council');
@@ -462,6 +551,11 @@ function App() {
   };
 
   const handleAbort = () => {
+    stopProgressPolling();
+    if (advisorAbortControllerRef.current) {
+      advisorAbortControllerRef.current.abort();
+      setIsLoading(false);
+    }
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       // Don't set to null here - let the request handler clean up
@@ -523,10 +617,24 @@ function App() {
 
       setCurrentConversation({
         id: activeConversationId,
+        mode: 'advisors',
+        title: 'New Conversation',
         messages: [userMessage, debateMessage],
       });
 
       advisorAbortControllerRef.current = new AbortController();
+
+      const updateAdvisorMessage = (updater) => {
+        setCurrentConversation((prev) => {
+          if (!prev || prev.id !== activeConversationId) return prev;
+          const messages = [...(prev.messages || [])];
+          const lastIdx = messages.length - 1;
+          const lastMsg = messages[lastIdx];
+          if (!isAdvisorMessage(lastMsg)) return prev;
+          messages[lastIdx] = updater(lastMsg);
+          return { ...prev, mode: 'advisors', messages };
+        });
+      };
 
       await api.sendDebateStream(
         activeConversationId,
@@ -534,34 +642,22 @@ function App() {
         (eventType, event) => {
           switch (eventType) {
             case 'advisor_debate_start':
-              setCurrentConversation((prev) => {
-                const messages = [...prev.messages];
-                const lastMsg = messages[messages.length - 1];
-                messages[messages.length - 1] = {
-                  ...lastMsg,
-                  personas: event.data?.personas || [],
-                  maxRounds: event.data?.max_rounds || lastMsg.maxRounds,
-                };
-                return { ...prev, messages };
-              });
+              updateAdvisorMessage((lastMsg) => ({
+                ...lastMsg,
+                personas: event.data?.personas || [],
+                maxRounds: event.data?.max_rounds || lastMsg.maxRounds,
+              }));
               break;
 
             case 'advisor_round_start':
-              setCurrentConversation((prev) => {
-                const messages = [...prev.messages];
-                const lastMsg = messages[messages.length - 1];
-                messages[messages.length - 1] = {
-                  ...lastMsg,
-                  currentRound: event.round || event.data?.round_number || lastMsg.currentRound,
-                };
-                return { ...prev, messages };
-              });
+              updateAdvisorMessage((lastMsg) => ({
+                ...lastMsg,
+                currentRound: event.round || event.data?.round_number || lastMsg.currentRound,
+              }));
               break;
 
             case 'advisor_response':
-              setCurrentConversation((prev) => {
-                const messages = [...prev.messages];
-                const lastMsg = messages[messages.length - 1];
+              updateAdvisorMessage((lastMsg) => {
                 const rounds = [...(lastMsg.rounds || [])];
                 const roundIndex = (event.round || 1) - 1;
                 if (!rounds[roundIndex]) {
@@ -571,87 +667,79 @@ function App() {
                   ...rounds[roundIndex],
                   responses: [...rounds[roundIndex].responses, event.data],
                 };
-                messages[messages.length - 1] = { ...lastMsg, rounds };
-                return { ...prev, messages };
+                return { ...lastMsg, rounds };
               });
               break;
 
             case 'advisor_round_complete':
-              setCurrentConversation((prev) => {
-                const messages = [...prev.messages];
-                const lastMsg = messages[messages.length - 1];
+              updateAdvisorMessage((lastMsg) => {
                 const rounds = [...(lastMsg.rounds || [])];
-                const roundIndex = (event.round || 1) - 1;
+                const roundNumber = event.round || event.data?.round_number || 1;
+                const roundIndex = roundNumber - 1;
                 if (!rounds[roundIndex]) {
-                  rounds[roundIndex] = { round: event.round, responses: [], complete: false };
+                  rounds[roundIndex] = { round: roundNumber, responses: [], complete: false };
                 }
                 rounds[roundIndex] = {
                   ...rounds[roundIndex],
+                  responses: event.data?.responses || rounds[roundIndex].responses,
                   complete: true,
-                  consensusReached: event.consensus_reached || false,
+                  consensusReached: event.data?.consensus_reached || false,
+                  averageConsensusScore: event.data?.average_consensus_score,
                 };
-                messages[messages.length - 1] = {
+                return {
                   ...lastMsg,
                   rounds,
-                  consensusReached: event.consensus_reached || false,
+                  consensusReached: event.data?.consensus_reached || false,
                 };
-                return { ...prev, messages };
               });
               break;
 
             case 'advisor_verdict':
-              setCurrentConversation((prev) => {
-                const messages = [...prev.messages];
-                const lastMsg = messages[messages.length - 1];
-                messages[messages.length - 1] = {
-                  ...lastMsg,
-                  verdict: event.data || event,
-                };
-                return { ...prev, messages };
-              });
+              updateAdvisorMessage((lastMsg) => ({
+                ...lastMsg,
+                verdict: event.data || event,
+              }));
               break;
 
             case 'advisor_tiebreaker':
-              setCurrentConversation((prev) => {
-                const messages = [...prev.messages];
-                const lastMsg = messages[messages.length - 1];
-                messages[messages.length - 1] = {
-                  ...lastMsg,
-                  tiebreaker: event.data || event,
-                };
-                return { ...prev, messages };
-              });
+              updateAdvisorMessage((lastMsg) => ({
+                ...lastMsg,
+                tiebreaker: event.data || event,
+              }));
               break;
 
             case 'advisor_complete':
-              setCurrentConversation((prev) => {
-                const messages = [...prev.messages];
-                const lastMsg = messages[messages.length - 1];
-                messages[messages.length - 1] = {
+              updateAdvisorMessage((lastMsg) => ({
                   ...lastMsg,
                   isRunning: false,
+                  personas: event.data?.personas || lastMsg.personas,
+                  rounds: (event.data?.rounds || lastMsg.rounds || []).map(normalizeAdvisorRound),
+                  verdict: event.data?.verdict || lastMsg.verdict,
+                  tiebreaker: event.data?.tiebreaker || lastMsg.tiebreaker,
+                  consensusReached: event.data?.consensus_reached ?? lastMsg.consensusReached,
                   metadata: {
                     ...lastMsg.metadata,
                     cost_report: event.data?.cost_report,
                   },
-                };
-                return { ...prev, messages };
-              });
+                }));
               setIsLoading(false);
               break;
 
             case 'advisor_error':
-              setCurrentConversation((prev) => {
-                const messages = [...prev.messages];
-                const lastMsg = messages[messages.length - 1];
-                messages[messages.length - 1] = {
+              updateAdvisorMessage((lastMsg) => ({
                   ...lastMsg,
                   isRunning: false,
                   error: event.message || 'Advisor debate failed',
-                };
-                return { ...prev, messages };
-              });
+                }));
               setIsLoading(false);
+              break;
+
+            case 'title_complete':
+              loadConversations();
+              setCurrentConversation((prev) => {
+                if (!prev || prev.id !== activeConversationId) return prev;
+                return { ...prev, title: event.data?.title || prev.title };
+              });
               break;
 
             default:
@@ -663,7 +751,7 @@ function App() {
     } catch (error) {
       if (error.name === 'AbortError') {
         setCurrentConversation((prev) => {
-          if (!prev || prev.messages.length < 2) return prev;
+          if (!prev || prev.id !== activeConversationId || prev.messages.length < 2) return prev;
           const messages = [...prev.messages];
           const lastMsg = messages[messages.length - 1];
           if (lastMsg.type === 'advisor_debate') {
@@ -677,7 +765,7 @@ function App() {
       console.error('Failed to start debate:', error);
       // Surface the error to the user instead of showing a blank screen
       setCurrentConversation((prev) => {
-        if (!prev?.messages?.length) return prev;
+        if (!prev?.messages?.length || prev.id !== activeConversationId) return prev;
         const messages = [...prev.messages];
         const lastMsg = messages[messages.length - 1];
         if (lastMsg.type === 'advisor_debate') {

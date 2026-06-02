@@ -13,6 +13,22 @@ const DIRECT_PROVIDERS = [
     { id: 'opencode-go', name: 'OpenCode Go', key: 'opencode_api_key' },
 ];
 
+const isFixedTemperatureModel = (modelId = '') => {
+    let normalized = String(modelId).toLowerCase();
+    const prefixMatch = normalized.match(/^([a-z-]+):(.+)$/);
+    if (prefixMatch) normalized = prefixMatch[2];
+
+    if (normalized.includes('/')) {
+        normalized = normalized.split('/').slice(1).join('/');
+    }
+
+    return (
+        normalized.startsWith('gpt-5') ||
+        /^o(?:1|3|4)(?:[-.]|$)/.test(normalized) ||
+        /^claude-(?:opus|sonnet|haiku)-[4-9](?:[-.]|$)/.test(normalized)
+    );
+};
+
 export default function CouncilConfig({
     settings,
     ollamaStatus,
@@ -410,13 +426,13 @@ export default function CouncilConfig({
                                 value={councilTemperature}
                                 onChange={(e) => setCouncilTemperature(parseFloat(e.target.value))}
                                 className="heat-slider"
-                                disabled={councilModels.every(m => m.includes('gpt-5.1') || m.includes('o1-') || m.includes('o3-'))}
+                                disabled={councilModels.every(isFixedTemperatureModel)}
                             />
                             <span className="heat-icon hot">🔥</span>
                         </div>
-                        {councilModels.some(m => m.includes('gpt-5.1') || m.includes('o1-') || m.includes('o3-')) && (
+                        {councilModels.some(isFixedTemperatureModel) && (
                             <div className="heat-warning">
-                                ⚠️ Some selected models (e.g. GPT-5.1, o1) enforce fixed temperature and will ignore this setting.
+                                ⚠️ Some selected models enforce fixed temperature and will ignore this setting.
                             </div>
                         )}
                         <p className="heat-note" style={{ fontSize: '11px', color: '#94a3b8', marginTop: '8px' }}>
@@ -502,11 +518,11 @@ export default function CouncilConfig({
                                 value={chairmanTemperature}
                                 onChange={(e) => setChairmanTemperature(parseFloat(e.target.value))}
                                 className="heat-slider"
-                                disabled={chairmanDisabled || chairmanModel.includes('gpt-5.1') || chairmanModel.includes('o1-') || chairmanModel.includes('o3-')}
+                                disabled={chairmanDisabled || isFixedTemperatureModel(chairmanModel)}
                             />
                             <span className="heat-icon hot">🔥</span>
                         </div>
-                        {(chairmanModel.includes('gpt-5.1') || chairmanModel.includes('o1-') || chairmanModel.includes('o3-')) && (
+                        {isFixedTemperatureModel(chairmanModel) && (
                             <div className="heat-warning">
                                 ⚠️ This model enforces fixed temperature and will ignore this setting.
                             </div>

@@ -9,6 +9,7 @@ from .config import DATA_DIR
 
 
 INDEX_FILE_NAME = "conversations_index.json"
+VALID_CONVERSATION_MODES = {"council", "advisors"}
 
 
 def ensure_data_dir():
@@ -46,6 +47,52 @@ def _save_index(index: List[Dict[str, Any]]):
         json.dump(index, f, indent=2)
 
 
+def _normalize_conversation_mode(mode: Any) -> str:
+    """Return a valid conversation mode, defaulting to council."""
+    if isinstance(mode, str) and mode in VALID_CONVERSATION_MODES:
+        return mode
+    return "council"
+
+
+def _message_is_advisor_debate(message: Dict[str, Any]) -> bool:
+    """Detect advisor debate messages, including older records missing mode."""
+    if message.get("mode") == "advisors" or message.get("type") == "advisor_debate":
+        return True
+
+    metadata = message.get("metadata") or {}
+    has_advisor_metadata = any(
+        key in metadata
+        for key in ("persona_ids", "default_model", "tiebreaker_model", "model_assignments")
+    )
+    has_advisor_payload = (
+        isinstance(message.get("rounds"), list)
+        and (
+            "verdict" in message
+            or "tiebreaker" in message
+            or "personas" in message
+            or has_advisor_metadata
+        )
+    )
+    return has_advisor_payload
+
+
+def infer_conversation_mode(conversation: Dict[str, Any]) -> str:
+    """Infer the conversation mode from explicit metadata and saved messages."""
+    if any(_message_is_advisor_debate(msg) for msg in conversation.get("messages", [])):
+        return "advisors"
+    return _normalize_conversation_mode(conversation.get("mode"))
+
+
+def _is_conversation_record(data: Any) -> bool:
+    """Return whether a JSON object looks like a stored conversation."""
+    return (
+        isinstance(data, dict)
+        and isinstance(data.get("id"), str)
+        and isinstance(data.get("created_at"), str)
+        and isinstance(data.get("messages"), list)
+    )
+
+
 def rebuild_index() -> List[Dict[str, Any]]:
     """
     Rebuild the conversation index from actual conversation files.
@@ -60,11 +107,13 @@ def rebuild_index() -> List[Dict[str, Any]]:
             try:
                 with open(path, 'r') as f:
                     data = json.load(f)
+                    if not _is_conversation_record(data):
+                        continue
                     index.append({
                         "id": data["id"],
                         "created_at": data["created_at"],
                         "title": data.get("title", "New Conversation"),
-                        "mode": data.get("mode", "council"),
+                        "mode": infer_conversation_mode(data),
                         "message_count": len(data["messages"])
                     })
             except (json.JSONDecodeError, OSError):
@@ -88,7 +137,7 @@ def _update_index_entry(conversation: Dict[str, Any]):
         "id": conversation["id"],
         "created_at": conversation["created_at"],
         "title": conversation.get("title", "New Conversation"),
-        "mode": conversation.get("mode", "council"),
+        "mode": infer_conversation_mode(conversation),
         "message_count": len(conversation["messages"])
     }
 
@@ -133,7 +182,7 @@ def create_conversation(conversation_id: str, mode: str = "council") -> Dict[str
         "id": conversation_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "title": "New Conversation",
-        "mode": mode,
+        "mode": _normalize_conversation_mode(mode),
         "messages": []
     }
 
@@ -164,7 +213,9 @@ def get_conversation(conversation_id: str) -> Optional[Dict[str, Any]]:
         return None
 
     with open(path, 'r') as f:
-        return json.load(f)
+        conversation = json.load(f)
+    conversation["mode"] = infer_conversation_mode(conversation)
+    return conversation
 
 
 def save_conversation(conversation: Dict[str, Any]):
@@ -175,6 +226,7 @@ def save_conversation(conversation: Dict[str, Any]):
         conversation: Conversation dict to save
     """
     ensure_data_dir()
+    conversation["mode"] = infer_conversation_mode(conversation)
 
     path = get_conversation_path(conversation['id'])
     with open(path, 'w') as f:
@@ -307,6 +359,7 @@ def add_advisor_message(
     if metadata:
         message["metadata"] = metadata
 
+    conversation["mode"] = "advisors"
     conversation["messages"].append(message)
     save_conversation(conversation)
 

@@ -91,7 +91,7 @@
 
 .cost-report__row {
   display: grid;
-  grid-template-columns: minmax(0, 1.8fr) 0.45fr 0.7fr 0.65fr 0.7fr;
+  grid-template-columns: minmax(0, 1.8fr) 0.45fr 0.85fr 0.65fr 0.7fr;
   gap: 10px;
   align-items: center;
   padding: 9px 11px;
@@ -120,6 +120,18 @@
   overflow: hidden;
   color: var(--text-primary);
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cost-report__tokens {
+  display: grid;
+  gap: 2px;
+}
+
+.cost-report__tokens small {
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.2;
   white-space: nowrap;
 }
 
@@ -163,7 +175,7 @@
     grid-template-columns: minmax(0, 1fr) auto auto;
   }
 
-  .cost-report__row span:nth-child(3),
+  .cost-report__row span:nth-child(2),
   .cost-report__row span:nth-child(5) {
     display: none;
   }

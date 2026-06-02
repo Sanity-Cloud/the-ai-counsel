@@ -670,7 +670,7 @@ async def generate_conversation_title(user_query: str) -> str:
 
     chairman_model = get_chairman_model()
     messages = [{"role": "user", "content": prompt}]
-
+    
     try:
         response = await query_model(chairman_model, messages, temperature=0.3)
         if response and not response.get('error'):
@@ -691,32 +691,6 @@ async def generate_conversation_title(user_query: str) -> str:
     title = title.strip('"\'')
     if len(title) > 50:
         title = title[:47] + "..."
-    return title
-
-
-def derive_conversation_title(user_query: str, max_length: int = 50) -> str:
-    """
-    Derive a short title from the first user message (no LLM call).
-
-    The full text remains accessible to the UI via the stored user message
-    and via a ``title`` hover attribute on the sidebar item.
-
-    Args:
-        user_query: The first user message
-        max_length: Maximum title length before truncation (default 50)
-
-    Returns:
-        A short title derived from the user message
-    """
-    if not user_query or not isinstance(user_query, str):
-        return "Untitled Conversation"
-
-    title = user_query.strip().strip('"\'')
-    title = " ".join(title.split())
-    if not title:
-        return "Untitled Conversation"
-    if len(title) > max_length:
-        title = title[: max_length - 3].rstrip() + "..."
     return title
 
 

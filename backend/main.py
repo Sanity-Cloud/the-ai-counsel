@@ -14,7 +14,7 @@ import json
 import asyncio
 
 from . import storage
-from .council import derive_conversation_title, generate_conversation_title, generate_search_query, stage1_collect_responses, stage2_collect_rankings, stage3_synthesize_final, calculate_aggregate_rankings, PROVIDERS
+from .council import generate_conversation_title, generate_search_query, stage1_collect_responses, stage2_collect_rankings, stage3_synthesize_final, calculate_aggregate_rankings, PROVIDERS
 from .config import get_chairman_model, get_council_models
 from .costs import build_advisor_cost_report, build_council_cost_report, build_iterative_debate_cost_report
 from .model_preflight import build_preflight_error_message, preflight_models
@@ -466,6 +466,7 @@ async def send_message_stream(conversation_id: str, body: SendMessageRequest, re
     is_first_message = len(conversation["messages"]) == 0
 
     async def event_generator():
+        title_task = None
         stage1_results = []
         stage2_results = []
         stage3_result = None
@@ -482,11 +483,9 @@ async def send_message_stream(conversation_id: str, body: SendMessageRequest, re
                 yield f"data: {json.dumps({'type': 'error', 'message': preflight_error})}\n\n"
                 return
 
-            # Derive title from the first user message (no LLM call)
+            # Start title generation in parallel (don't await yet)
             if is_first_message:
-                title = derive_conversation_title(body.content)
-                storage.update_conversation_title(conversation_id, title)
-                conversation["title"] = title
+                title_task = asyncio.create_task(generate_conversation_title(body.content))
 
             search_context = ""
             search_query = ""
@@ -600,9 +599,15 @@ async def send_message_stream(conversation_id: str, body: SendMessageRequest, re
 
             cost_report = build_council_cost_report(stage1_results, stage2_results, stage3_result)
 
-            # Title is derived synchronously above; emit a title_complete event for the UI.
-            if is_first_message:
-                yield f"data: {json.dumps({'type': 'title_complete', 'data': {'title': title}})}\n\n"
+            # Wait for title generation if it was started
+            if title_task:
+                try:
+                    title = await title_task
+                    storage.update_conversation_title(conversation_id, title)
+                    conversation["title"] = title
+                    yield f"data: {json.dumps({'type': 'title_complete', 'data': {'title': title}})}\n\n"
+                except Exception as e:
+                    print(f"Error waiting for title task: {e}")
 
             # Save complete assistant message with metadata
             metadata = {
@@ -646,7 +651,14 @@ async def send_message_stream(conversation_id: str, body: SendMessageRequest, re
                     print(f"Saved partial results: {len(stage1_results)} stage1, {len(stage2_results)} stage2")
                 except Exception as save_err:
                     print(f"Could not save partial results: {save_err}")
-            # Title is set synchronously; nothing async to wait for on cancellation.
+            # Even if cancelled, try to save the title if it's ready or nearly ready
+            if title_task:
+                try:
+                    title = await asyncio.wait_for(title_task, timeout=2.0)
+                    storage.update_conversation_title(conversation_id, title)
+                    print(f"Saved title despite cancellation: {title}")
+                except Exception as e:
+                    print(f"Could not save title during cancellation: {e}")
             raise
         except Exception as e:
             print(f"Stream error: {e}")
@@ -678,6 +690,7 @@ async def send_debate_message_stream(conversation_id: str, body: SendMessageRequ
     is_first_message = len(conversation["messages"]) == 0
 
     async def event_generator():
+        title_task = None
         rounds_data = []
         final_stage1 = []
         final_stage2 = []
@@ -700,11 +713,9 @@ async def send_debate_message_stream(conversation_id: str, body: SendMessageRequ
                 yield f"data: {json.dumps({'type': 'error', 'message': preflight_error})}\n\n"
                 return
 
-            # Derive title from the first user message (no LLM call)
+            # Start title generation in parallel
             if is_first_message:
-                title = derive_conversation_title(body.content)
-                storage.update_conversation_title(conversation_id, title)
-                conversation["title"] = title
+                title_task = asyncio.create_task(generate_conversation_title(body.content))
 
             search_context = ""
             search_query = ""
@@ -818,8 +829,14 @@ async def send_debate_message_stream(conversation_id: str, body: SendMessageRequ
                         final_aggregate_claim_verdicts = last_meta.get("aggregate_claim_verdicts")
                     final_stage4 = event.get("stage4")
 
-            if is_first_message:
-                yield f"data: {json.dumps({'type': 'title_complete', 'data': {'title': title}})}\n\n"
+            if title_task:
+                try:
+                    title = await title_task
+                    storage.update_conversation_title(conversation_id, title)
+                    conversation["title"] = title
+                    yield f"data: {json.dumps({'type': 'title_complete', 'data': {'title': title}})}\n\n"
+                except Exception as e:
+                    print(f"Error waiting for title task: {e}")
 
             # Save assistant message with metadata
             metadata = {
@@ -872,7 +889,12 @@ async def send_debate_message_stream(conversation_id: str, body: SendMessageRequ
                     print(f"Saved partial debate results: {len(rounds_data)} rounds")
                 except Exception as save_err:
                     print(f"Could not save partial debate results: {save_err}")
-            # Title is set synchronously; nothing async to wait for on cancellation.
+            if title_task:
+                try:
+                    title = await asyncio.wait_for(title_task, timeout=2.0)
+                    storage.update_conversation_title(conversation_id, title)
+                except Exception as e:
+                    print(f"Could not save title during cancellation: {e}")
             raise
         except Exception as e:
             print(f"Stream error: {e}")
@@ -1009,16 +1031,17 @@ async def start_debate_stream(conversation_id: str, body: StartDebateRequest, re
             )
 
             if is_first_message:
-                title = derive_conversation_title(body.question)
+                title = await generate_conversation_title(body.question)
                 storage.update_conversation_title(conversation_id, title)
-                storage.update_conversation_mode(conversation_id, "advisors")
                 yield f"data: {json.dumps({'type': 'title_complete', 'data': {'title': title}})}\n\n"
 
         except asyncio.CancelledError:
             if is_first_message:
-                title = derive_conversation_title(body.question)
-                storage.update_conversation_title(conversation_id, title)
-                storage.update_conversation_mode(conversation_id, "advisors")
+                try:
+                    title = await generate_conversation_title(body.question)
+                    storage.update_conversation_title(conversation_id, title)
+                except Exception:
+                    pass
             raise
         except Exception as e:
             logger.error(f"Debate stream error: {e}")
@@ -1043,18 +1066,12 @@ async def send_message_sync(conversation_id: str, body: SendMessageRequest):
         raise HTTPException(status_code=404, detail="Conversation not found")
 
     history = _build_chat_history(conversation)
-    is_first_message = len(conversation["messages"]) == 0
 
     preflight_error = await _run_model_preflight(_build_council_preflight_models(body))
     if preflight_error:
         raise HTTPException(status_code=400, detail=preflight_error)
 
     storage.add_user_message(conversation_id, body.content, conversation=conversation)
-
-    if is_first_message:
-        title = derive_conversation_title(body.content)
-        storage.update_conversation_title(conversation_id, title)
-        conversation["title"] = title
 
     search_context = ""
     search_query = ""

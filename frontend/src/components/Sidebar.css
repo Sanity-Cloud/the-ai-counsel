@@ -282,14 +282,6 @@
   gap: 6px;
 }
 
-.conversation-title-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-  flex: 1;
-}
-
 .conv-mode-tag {
   font-family: var(--font-code);
   font-size: 9px;

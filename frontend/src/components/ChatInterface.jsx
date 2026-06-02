@@ -69,7 +69,6 @@ function isCouncilTurnPending(msg, isActiveTurn, isLoading) {
 
 export default function ChatInterface({
     conversation,
-    conversationCostReport = null,
     onSendMessage,
     onAbort,
     isLoading,
@@ -194,15 +193,6 @@ export default function ChatInterface({
 
     return (
         <div className="chat-interface">
-            {/* Running conversation cost total */}
-            {conversationCostReport && (conversationCostReport.total_calls > 0 || conversationCostReport.message_count > 0) && (
-                <div className="conversation-cost-banner">
-                    <CostReport
-                        report={conversationCostReport}
-                        title={`Conversation Total · ${conversationCostReport.message_count} ${conversationCostReport.message_count === 1 ? 'turn' : 'turns'}`}
-                    />
-                </div>
-            )}
             {/* Messages Area */}
             <div className="messages-area" ref={messagesContainerRef}>
                 {mode === 'advisors' && conversation.messages.length === 0 ? (

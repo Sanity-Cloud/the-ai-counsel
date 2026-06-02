@@ -352,6 +352,25 @@ def update_conversation_title(conversation_id: str, title: str):
     save_conversation(conversation)
 
 
+def update_conversation_mode(conversation_id: str, mode: str):
+    """
+    Update the mode of a conversation ("council" or "advisors").
+
+    Used by the debate endpoints so the sidebar badge reflects the actual
+    deliberation type once the first message is sent.
+
+    Args:
+        conversation_id: Conversation identifier
+        mode: New mode for the conversation
+    """
+    conversation = get_conversation(conversation_id)
+    if conversation is None:
+        raise ValueError(f"Conversation {conversation_id} not found")
+
+    conversation["mode"] = mode
+    save_conversation(conversation)
+
+
 def delete_conversation(conversation_id: str) -> bool:
     """
     Delete a conversation.

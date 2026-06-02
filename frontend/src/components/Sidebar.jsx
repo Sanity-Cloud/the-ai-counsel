@@ -134,7 +134,9 @@ export default function Sidebar({
                 <span className={`conv-mode-tag conv-mode-tag--${conv.mode === 'advisors' ? 'advisors' : 'council'}`}>
                   {conv.mode === 'advisors' ? 'ADV' : 'CNC'}
                 </span>
-                {conv.title || 'New Conversation'}
+                <span className="conversation-title-text" title={conv.title || 'New Conversation'}>
+                  {conv.title || 'New Conversation'}
+                </span>
               </div>
               <div className="conversation-meta">
                 <span>{new Date(conv.created_at).toLocaleDateString()}</span>

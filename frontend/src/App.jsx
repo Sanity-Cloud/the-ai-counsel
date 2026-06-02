@@ -1,6 +1,7 @@
-import { Suspense, lazy, useState, useEffect, useRef, useCallback, Component } from 'react';
+import { Suspense, lazy, useState, useEffect, useRef, useMemo, useCallback, Component } from 'react';
 import Sidebar from './components/Sidebar';
 import { api, DEFAULT_EXECUTION_MODE, buildAvailableSearchProviders } from './api';
+import { summarizeConversationCost } from './utils/costSummary';
 import './App.css';
 import './components/StageCopyButtons.css';
 import './ModeToggle.css';
@@ -44,6 +45,11 @@ function App() {
   const [currentConversationId, setCurrentConversationId] = useState(null);
   const [currentConversation, setCurrentConversation] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  const conversationCostReport = useMemo(
+    () => summarizeConversationCost(currentConversation?.messages),
+    [currentConversation?.messages],
+  );
   const [showSettings, setShowSettings] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState('llm_keys');
   const [ollamaStatus, setOllamaStatus] = useState({
@@ -1429,6 +1435,7 @@ function App() {
             ) : (
               <ChatInterface
                 conversation={currentConversation}
+                conversationCostReport={conversationCostReport}
                 onSendMessage={handleSendMessage}
                 onAbort={handleAbort}
                 isLoading={isLoading}

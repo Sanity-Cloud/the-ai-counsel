@@ -1683,11 +1683,6 @@ async def update_app_settings(request: UpdateSettingsRequest):
 
     # Council Configuration (unified)
     if request.council_models is not None:
-        if len(request.council_models) < 1:
-            raise HTTPException(
-                status_code=400,
-                detail="At least one council model must be selected"
-            )
         if len(request.council_models) > 8:
             raise HTTPException(
                 status_code=400,

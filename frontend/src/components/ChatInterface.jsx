@@ -67,6 +67,44 @@ function isCouncilTurnPending(msg, isActiveTurn, isLoading) {
     return true;
 }
 
+const CRITIQUE_MODE_LABELS = {
+    freeform: 'Freeform',
+    paragraph: 'Paragraph',
+    claim: 'Claim-by-Claim',
+};
+
+function DebateConfigBar({ critiqueMode, debateRounds, autoConverge, convergenceThreshold, onOpenSettings }) {
+    const modeLabel = CRITIQUE_MODE_LABELS[critiqueMode] || critiqueMode;
+    const roundsLabel = debateRounds === 1 ? '1 round' : `${debateRounds} rounds`;
+    const showAutoConverge = debateRounds > 1 && autoConverge;
+
+    return (
+        <div className="debate-config-bar">
+            <div className="debate-config-bar__info">
+                <span className="debate-config-bar__label">Debate:</span>
+                <span className="debate-config-bar__pill">{modeLabel}</span>
+                <span className="debate-config-bar__dot">·</span>
+                <span className="debate-config-bar__value">{roundsLabel}</span>
+                {showAutoConverge && (
+                    <>
+                        <span className="debate-config-bar__dot">·</span>
+                        <span className="debate-config-bar__converge">
+                            Auto-converge ({convergenceThreshold} stable)
+                        </span>
+                    </>
+                )}
+            </div>
+            <button
+                type="button"
+                className="debate-config-bar__link"
+                onClick={() => onOpenSettings?.('debate')}
+            >
+                Council Debate Config →
+            </button>
+        </div>
+    );
+}
+
 export default function ChatInterface({
     conversation,
     onSendMessage,
@@ -84,6 +122,10 @@ export default function ChatInterface({
     onStartDebate,
     onNewConversation,
     onCouncilChange,
+    critiqueMode = 'freeform',
+    debateRounds = 1,
+    autoConverge = true,
+    convergenceThreshold = 2,
 }) {
     const [input, setInput] = useState('');
     const [activeSearchProvider, setActiveSearchProvider] = useState(null);
@@ -247,8 +289,8 @@ export default function ChatInterface({
                                     else if (knownMode === 'chat_ranking') label = '⚖️ Chat + Ranking';
                                     else if (knownMode === 'full') {
                                         if (rounds > 1) {
-                                            const capitalizedCritique = critique.charAt(0).toUpperCase() + critique.slice(1);
-                                            label = `🏛️ Full Debate (${rounds} Rds • ${capitalizedCritique})`;
+                                            const critiqueLabel = CRITIQUE_MODE_LABELS[critique] || critique;
+                                            label = `🏛️ Full Debate (${rounds} Rds • ${critiqueLabel})`;
                                         } else {
                                             label = '🏛️ Full Deliberation';
                                         }
@@ -304,11 +346,19 @@ export default function ChatInterface({
 
             {/* Floating Command Capsule — hidden for advisor debates */}
             {mode !== 'advisors' && <div className="input-area">
+                {(debateRounds > 1 || critiqueMode !== 'freeform') && (
+                    <DebateConfigBar
+                        critiqueMode={critiqueMode}
+                        debateRounds={debateRounds}
+                        autoConverge={autoConverge}
+                        convergenceThreshold={convergenceThreshold}
+                        onOpenSettings={onOpenSettings}
+                    />
+                )}
                 {!councilConfigured ? (
                     <div className="input-container config-required">
                         <span className="config-message">
-                            ⚠️ Council not ready — add at least one member
-                            {executionMode === 'full' ? ' and a chairman' : ''}.
+                            ⚠️ Council not ready — add at least one member.
                             <button className="config-link" onClick={() => onOpenSettings('llm_keys')}>Configure API Keys</button>
                         </span>
                     </div>
@@ -384,6 +434,7 @@ export default function ChatInterface({
                                 value={executionMode}
                                 onChange={onExecutionModeChange}
                                 disabled={isLoading}
+                                chairmanModel={chairmanModel}
                             />
                         </div>
                     </form>

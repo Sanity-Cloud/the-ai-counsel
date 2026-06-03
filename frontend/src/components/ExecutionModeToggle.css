@@ -44,6 +44,10 @@
     cursor: not-allowed;
 }
 
+.mode-option.locked {
+    opacity: 0.35;
+}
+
 .mode-icon {
     font-size: 14px;
     line-height: 1;

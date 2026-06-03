@@ -117,13 +117,9 @@ function App() {
   const conversationVersionRef = useRef(0);
   const skipLoadForIdRef = useRef(null);
 
-  const computeCouncilConfigured = useCallback((models, chairman, mode) => {
+  const computeCouncilConfigured = useCallback((models) => {
     const members = (models || []).filter((m) => m && m.trim());
-    if (members.length < 1) return false;
-    if (mode === 'full') {
-      return !!(chairman && chairman.trim());
-    }
-    return true;
+    return members.length >= 1;
   }, []);
 
   const handleCouncilChange = useCallback(async ({ councilModels: nextModels, chairmanModel: nextChairman }) => {
@@ -131,7 +127,7 @@ function App() {
     const chairman = nextChairman || '';
     setCouncilModels(filtered);
     setChairmanModel(chairman);
-    setCouncilConfigured(computeCouncilConfigured(filtered, chairman, executionMode));
+    setCouncilConfigured(computeCouncilConfigured(filtered));
     try {
       await api.updateSettings({
         council_models: filtered,
@@ -140,11 +136,17 @@ function App() {
     } catch (err) {
       console.error('Failed to save council lineup:', err);
     }
-  }, [computeCouncilConfigured, executionMode]);
+  }, [computeCouncilConfigured]);
 
   useEffect(() => {
-    setCouncilConfigured(computeCouncilConfigured(councilModels, chairmanModel, executionMode));
-  }, [councilModels, chairmanModel, executionMode, computeCouncilConfigured]);
+    setCouncilConfigured(computeCouncilConfigured(councilModels));
+  }, [councilModels, computeCouncilConfigured]);
+
+  useEffect(() => {
+    if (executionMode === 'full' && (!chairmanModel || !chairmanModel.trim())) {
+      setExecutionMode('chat_ranking');
+    }
+  }, [chairmanModel, executionMode]);
 
   // Check initial configuration on mount
   useEffect(() => {
@@ -206,7 +208,7 @@ function App() {
       setCouncilModels(models);
       setChairmanModel(chairman);
 
-      setCouncilConfigured(computeCouncilConfigured(models, chairman, settings.execution_mode || DEFAULT_EXECUTION_MODE));
+      setCouncilConfigured(computeCouncilConfigured(models));
 
       // 4. If no providers are configured, open settings
       if (!hasApiKey && !isOllamaConnected) {
@@ -237,11 +239,7 @@ function App() {
       setAutoConverge(settings.auto_converge !== undefined ? settings.auto_converge : true);
       setConvergenceThreshold(settings.convergence_threshold || 2);
 
-      setCouncilConfigured(computeCouncilConfigured(
-        models,
-        chairman,
-        settings.execution_mode || DEFAULT_EXECUTION_MODE
-      ));
+      setCouncilConfigured(computeCouncilConfigured(models));
     } catch (error) {
       console.error('Error after closing settings:', error);
     }
@@ -821,6 +819,11 @@ function App() {
   const handleSendMessage = async (content, searchProvider) => {
     if (!currentConversationId) return;
 
+    let effectiveMode = executionMode;
+    if (effectiveMode === 'full' && (!chairmanModel || !chairmanModel.trim())) {
+      effectiveMode = 'chat_ranking';
+    }
+
     stopProgressPolling();
     const currentRequestId = ++requestIdRef.current;
 
@@ -901,12 +904,15 @@ function App() {
       const streamOptions = {
         content,
         searchProvider,
-        executionMode,
+        executionMode: effectiveMode,
         councilModels,
-        chairmanModel: executionMode === 'full' ? chairmanModel : undefined,
+        chairmanModel: effectiveMode === 'full' ? chairmanModel : undefined,
       };
       if (isDebate) {
         streamOptions.debateRounds = debateRounds;
+        streamOptions.critiqueMode = critiqueMode;
+        streamOptions.autoConverge = autoConverge;
+        streamOptions.convergenceThreshold = convergenceThreshold;
       }
 
       await streamMethod(
@@ -1566,6 +1572,10 @@ function App() {
                 onStartDebate={handleStartDebate}
                 onNewConversation={handleNewConversation}
                 onCouncilChange={handleCouncilChange}
+                critiqueMode={critiqueMode}
+                debateRounds={debateRounds}
+                autoConverge={autoConverge}
+                convergenceThreshold={convergenceThreshold}
               />
             )}
           </Suspense>

@@ -127,6 +127,26 @@
   text-decoration: underline;
 }
 
+.council-setup__new-council-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 14px;
+  border-radius: 20px;
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  background: rgba(251, 191, 36, 0.06);
+  color: #fbbf24;
+  cursor: pointer;
+  font-size: 0.8125rem;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.council-setup__new-council-btn:hover {
+  background: rgba(251, 191, 36, 0.14);
+  color: #fcd34d;
+  border-color: rgba(251, 191, 36, 0.5);
+}
+
 .council-setup__model-empty,
 .council-setup__preset-dirty {
   font-size: 0.8125rem;

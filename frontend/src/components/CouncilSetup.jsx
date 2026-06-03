@@ -172,16 +172,19 @@ export default function CouncilSetup({
 
         if (!initialLoadDone.current && editable) {
           initialLoadDone.current = true;
-          const defaultPreset = loadedPresets.find((p) => p.is_default) || null;
-          if (defaultPreset) {
-            const presetMembers = filterMembers(defaultPreset.council_models);
-            const presetChairman = defaultPreset.chairman_model || '';
-            await onCouncilChangeRef.current?.({
-              councilModels: presetMembers,
-              chairmanModel: presetChairman,
-            });
-            setActivePresetId(defaultPreset.id);
-            loadedSnapshotRef.current = buildSnapshot(presetMembers, presetChairman);
+          const currentMembers = filterMembers(councilModels);
+          if (currentMembers.length === 0) {
+            const defaultPreset = loadedPresets.find((p) => p.is_default) || null;
+            if (defaultPreset) {
+              const presetMembers = filterMembers(defaultPreset.council_models);
+              const presetChairman = defaultPreset.chairman_model || '';
+              await onCouncilChangeRef.current?.({
+                councilModels: presetMembers,
+                chairmanModel: presetChairman,
+              });
+              setActivePresetId(defaultPreset.id);
+              loadedSnapshotRef.current = buildSnapshot(presetMembers, presetChairman);
+            }
           }
         }
       } catch (err) {
@@ -299,15 +302,12 @@ export default function CouncilSetup({
     setPresetPopoverOpen(false);
   };
 
-  const handleUpdateExistingChange = (checked) => {
-    if (checked) {
-      const presetName = activePreset?.name || 'this preset';
-      const confirmed = window.confirm(
-        `Overwrite "${presetName}"?\n\nThis will replace the saved council lineup with your current members and chairman. This cannot be undone.`
-      );
-      if (!confirmed) return;
-    }
-    setSaveForm((f) => ({ ...f, updateExisting: checked }));
+  const handleNewCouncil = async () => {
+    setActivePresetId(null);
+    loadedSnapshotRef.current = null;
+    setActiveEditor(null);
+    setAddingMember(false);
+    await persistCouncil([], '');
   };
 
   const closeSavePresetModal = () => {
@@ -478,6 +478,14 @@ export default function CouncilSetup({
             </div>
           )}
         </div>
+        <button
+          type="button"
+          className="council-setup__new-council-btn"
+          onClick={handleNewCouncil}
+          title="Clear all current members and chairman to start fresh"
+        >
+          + New Council · Clear Current
+        </button>
         {(isPresetDirty || !activePresetId) && (
           <button
             type="button"
@@ -552,7 +560,7 @@ export default function CouncilSetup({
                   <input
                     type="checkbox"
                     checked={saveForm.updateExisting}
-                    onChange={(e) => handleUpdateExistingChange(e.target.checked)}
+                    onChange={(e) => setSaveForm((f) => ({ ...f, updateExisting: e.target.checked }))}
                   />
                   Overwrite existing preset
                 </label>

@@ -5,6 +5,8 @@ const getConversationMode = (conversation) => (
   conversation?.mode === 'advisors' ? 'advisors' : 'council'
 );
 
+const getConversationTitle = (conv) => conv.title || 'New Conversation';
+
 const DATE_FORMAT_OPTIONS = {
   'auto':       undefined,
   'MM/DD/YYYY': { year: 'numeric', month: '2-digit', day: '2-digit' },
@@ -46,11 +48,9 @@ export default function Sidebar({
   const [confirmingDelete, setConfirmingDelete] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Filter conversations by title
   const filteredConversations = conversations.filter(conv => {
     if (!searchQuery.trim()) return true;
-    const title = conv.title || 'New Conversation';
-    return title.toLowerCase().includes(searchQuery.toLowerCase());
+    return getConversationTitle(conv).toLowerCase().includes(searchQuery.toLowerCase());
   });
 
   const handleAbortClick = (e) => {
@@ -154,17 +154,18 @@ export default function Sidebar({
         ) : (
           filteredConversations.map((conv) => {
             const mode = getConversationMode(conv);
+            const displayTitle = getConversationTitle(conv);
             return (
               <div
                 key={conv.id}
                 className={`conversation-item conversation-item--${mode} ${conv.id === currentConversationId ? 'active' : ''}`}
                 onClick={() => onSelectConversation(conv.id)}
               >
-                <div className="conversation-title">
+                <div className="conversation-title" title={conv.title || undefined}>
                   <span className={`conv-mode-tag conv-mode-tag--${mode}`}>
                     {mode === 'advisors' ? 'ADV' : 'CNC'}
                   </span>
-                  {conv.title || 'New Conversation'}
+                  <span className="conversation-title-text">{displayTitle}</span>
                 </div>
                 <div className="conversation-meta">
                   <span>{formatTimestamp(conv.created_at, dateFormat)}</span>

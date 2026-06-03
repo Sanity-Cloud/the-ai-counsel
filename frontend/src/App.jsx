@@ -9,6 +9,25 @@ const ChatInterface = lazy(() => import('./components/ChatInterface'));
 const Settings = lazy(() => import('./components/Settings'));
 const LandingPage = lazy(() => import('./components/LandingPage'));
 
+/** Stop any stage timers still missing an end timestamp. */
+function finalizeTimers(timers = {}) {
+  const now = Date.now();
+  const next = { ...timers };
+  if (next.stage1Start && !next.stage1End) next.stage1End = now;
+  if (next.stage2Start && !next.stage2End) next.stage2End = now;
+  if (next.stage3Start && !next.stage3End) next.stage3End = now;
+  if (next.stage4Start && !next.stage4End) next.stage4End = now;
+  return next;
+}
+
+const IDLE_LOADING = {
+  search: false,
+  stage1: false,
+  stage2: false,
+  stage3: false,
+  stage4: false,
+};
+
 function AppLoadingFallback() {
   return (
     <div className="app-loading" role="status" aria-live="polite">
@@ -882,6 +901,7 @@ function App() {
           stage1: false,
           stage2: false,
           stage3: false,
+          stage4: false,
         },
         timers: {
           stage1Start: null,
@@ -890,6 +910,8 @@ function App() {
           stage2End: null,
           stage3Start: null,
           stage3End: null,
+          stage4Start: null,
+          stage4End: null,
         },
         progress: {
           stage1: { count: 0, total: 0, currentModel: null },
@@ -1172,7 +1194,10 @@ function App() {
                   },
                   timers: {
                     ...lastMsg.timers,
-                    stage3Start: Date.now()
+                    stage3Start: Date.now(),
+                    stage2End: lastMsg.timers?.stage2Start && !lastMsg.timers?.stage2End
+                      ? Date.now()
+                      : lastMsg.timers?.stage2End,
                   }
                 };
 
@@ -1203,11 +1228,12 @@ function App() {
                 messages[messages.length - 1] = updatedLastMsg;
                 return { ...prev, messages };
               });
-              // Hide loading indicator once final answer is shown
-              setIsLoading(false);
               break;
 
             case 'round_start':
+              if (event.round > 1) {
+                setIsLoading(true);
+              }
               setCurrentConversation((prev) => {
                 const messages = [...prev.messages];
                 const lastMsg = messages[messages.length - 1];
@@ -1223,6 +1249,7 @@ function App() {
                     stage1: false,
                     stage2: false,
                     stage3: false,
+                    stage4: false,
                   },
                   timers: {
                     ...lastMsg.timers,
@@ -1306,6 +1333,7 @@ function App() {
               break;
 
             case 'stage4_start':
+              setIsLoading(true);
               setCurrentConversation((prev) => {
                 const messages = [...prev.messages];
                 const lastMsg = messages[messages.length - 1];
@@ -1318,7 +1346,10 @@ function App() {
                   },
                   timers: {
                     ...lastMsg.timers,
-                    stage4Start: Date.now()
+                    stage4Start: Date.now(),
+                    stage3End: lastMsg.timers?.stage3Start && !lastMsg.timers?.stage3End
+                      ? Date.now()
+                      : lastMsg.timers?.stage3End,
                   }
                 };
 
@@ -1365,6 +1396,8 @@ function App() {
                   stage1: lastRound.stage1 || lastMsg.stage1,
                   stage2: lastRound.stage2 || lastMsg.stage2,
                   stage3: lastRound.stage3 || lastMsg.stage3,
+                  loading: IDLE_LOADING,
+                  timers: finalizeTimers(lastMsg.timers),
                   metadata: {
                     ...lastMsg.metadata,
                     rounds: rounds,
@@ -1397,6 +1430,8 @@ function App() {
                 if (lastMsg.role === 'assistant') {
                   messages[messages.length - 1] = {
                     ...lastMsg,
+                    loading: IDLE_LOADING,
+                    timers: finalizeTimers(lastMsg.timers),
                     metadata: {
                       ...lastMsg.metadata,
                       ...(event.metadata || {}),
@@ -1420,12 +1455,8 @@ function App() {
                   messages[messages.length - 1] = {
                     ...lastMsg,
                     error: event.message || 'The council request failed.',
-                    loading: {
-                      search: false,
-                      stage1: false,
-                      stage2: false,
-                      stage3: false,
-                    },
+                    loading: IDLE_LOADING,
+                    timers: finalizeTimers(lastMsg.timers),
                   };
                 }
                 return { ...prev, messages };
@@ -1447,23 +1478,11 @@ function App() {
           const messages = [...prev.messages];
           const lastMsg = messages[messages.length - 1];
           if (lastMsg.role === 'assistant') {
-            const now = Date.now();
             messages[messages.length - 1] = {
               ...lastMsg,
               aborted: true,
-              loading: {
-                search: false,
-                stage1: false,
-                stage2: false,
-                stage3: false,
-              },
-              timers: {
-                ...lastMsg.timers,
-                // Stop any running timers
-                stage1End: lastMsg.timers?.stage1Start && !lastMsg.timers?.stage1End ? now : lastMsg.timers?.stage1End,
-                stage2End: lastMsg.timers?.stage2Start && !lastMsg.timers?.stage2End ? now : lastMsg.timers?.stage2End,
-                stage3End: lastMsg.timers?.stage3Start && !lastMsg.timers?.stage3End ? now : lastMsg.timers?.stage3End,
-              }
+              loading: IDLE_LOADING,
+              timers: finalizeTimers(lastMsg.timers),
             };
           }
           return { ...prev, messages };

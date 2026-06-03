@@ -59,7 +59,7 @@ function renderStage1Content(msg) {
 
 function isCouncilTurnPending(msg, isActiveTurn, isLoading) {
     if (!isActiveTurn || !isLoading || msg.error || msg.aborted) return false;
-    if (msg.loading?.search || msg.loading?.stage1 || msg.loading?.stage2 || msg.loading?.stage3) {
+    if (msg.loading?.search || msg.loading?.stage1 || msg.loading?.stage2 || msg.loading?.stage3 || msg.loading?.stage4) {
         return false;
     }
     if (hasStage1Results(msg) || hasStage2Results(msg) || msg.stage3) return false;
@@ -618,7 +618,13 @@ function CouncilMessageRenderer({
             {showStage4 && (
                 <div className="stage-scroll-anchor">
                     {msg.loading?.stage4 && !displayMetadata.stage4 ? (
-                        <Stage4Skeleton />
+                        <>
+                            <div className="stage-loading">
+                                <div className="spinner"></div>
+                                <span>📝 Stage 4: Generating corrected draft…</span>
+                            </div>
+                            <Stage4Skeleton />
+                        </>
                     ) : (
                         <Stage4
                             correctedDraft={displayMetadata.stage4}

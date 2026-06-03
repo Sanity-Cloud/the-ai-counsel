@@ -3,6 +3,7 @@ import AdvisorGrid from './AdvisorGrid';
 import MarkdownContent from './MarkdownContent';
 import { getShortModelName } from '../utils/modelHelpers';
 import CostReport from './CostReport';
+import { copyToClipboard } from '../utils/clipboard';
 import './DebateView.css';
 
 const toStr = (v) => (typeof v === 'string' ? v : String(v || ''));
@@ -136,12 +137,10 @@ export default function DebateView({
 
   const handleCopyVerdict = async () => {
     if (!verdict?.content) return;
-    try {
-      await navigator.clipboard.writeText(toStr(verdict.content));
+    const copied = await copyToClipboard(toStr(verdict.content));
+    if (copied) {
       setVerdictCopied(true);
       setTimeout(() => setVerdictCopied(false), 2000);
-    } catch (err) {
-      console.error('Failed to copy verdict:', err);
     }
   };
 

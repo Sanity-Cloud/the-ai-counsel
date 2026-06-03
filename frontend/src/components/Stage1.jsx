@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import Skeleton from './common/Skeleton';
 import { getModelVisuals, getShortModelName } from '../utils/modelHelpers';
+import { copyToClipboard } from '../utils/clipboard';
 import ThinkBlockRenderer from './ThinkBlockRenderer';
 import StageTimer from './StageTimer';
 import './Stage1.css';
@@ -43,12 +44,10 @@ export default function Stage1({ responses, startTime, endTime }) {
 
     if (!textToCopy) return;
 
-    try {
-      await navigator.clipboard.writeText(textToCopy);
+    const copied = await copyToClipboard(textToCopy);
+    if (copied) {
       setIsCopied(true);
       setTimeout(() => setIsCopied(false), 2000);
-    } catch (err) {
-      console.error('Failed to copy text:', err);
     }
   };
 

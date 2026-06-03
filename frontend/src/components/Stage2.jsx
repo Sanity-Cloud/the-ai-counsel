@@ -7,6 +7,7 @@ import { ClaimCardWithVerdicts } from './ClaimCards';
 import './Stage2.css';
 import './ClaimCards.css';
 import StageTimer from './StageTimer';
+import { copyToClipboard } from '../utils/clipboard';
 
 function deAnonymizeText(text, labelToModel) {
     if (!labelToModel) return text;
@@ -73,12 +74,10 @@ export default function Stage2({ rankings, labelToModel, aggregateRankings, star
 
         if (!textToCopy) return;
 
-        try {
-            await navigator.clipboard.writeText(textToCopy);
+        const copied = await copyToClipboard(textToCopy);
+        if (copied) {
             setIsCopied(true);
             setTimeout(() => setIsCopied(false), 2000);
-        } catch (err) {
-            console.error('Failed to copy text:', err);
         }
     };
 

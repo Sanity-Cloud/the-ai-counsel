@@ -39,16 +39,14 @@ The Settings panel opens automatically on first launch.
 1. Get a free API key at [openrouter.ai/keys](https://openrouter.ai/keys)
 2. Paste it in **LLM API Keys** → **OpenRouter**
 3. Click **Test** (auto-saves on success)
-4. Go to **Council Config** → Select models for your council
-5. Click **Save Changes**
+4. Go to **Council Config** → Select models for your council (saves automatically)
 
 ### Option B: Use Ollama (Free & Local)
 1. Install [Ollama](https://ollama.com/)
 2. Pull a model: `ollama pull llama3.1`
 3. Start Ollama: `ollama serve`
 4. In Settings → **LLM API Keys** → Click **Connect** for Ollama
-5. Go to **Council Config** → Enable "Local (Ollama)" → Select models for your **council**
-6. Click **Save Changes**
+5. Go to **Council Config** → Enable "Local (Ollama)" → Select models for your **council** (saves automatically)
 
 > **Advisors:** Once Ollama is connected in LLM API Keys, Advisor Setup lists Ollama models automatically — you do **not** need to enable the council "Local (Ollama)" toggle for advisors.
 
@@ -56,8 +54,7 @@ The Settings panel opens automatically on first launch.
 1. Get API keys from your preferred providers (OpenAI, Anthropic, Google, OpenCode Zen/Go, etc.)
 2. Enter keys in **LLM API Keys** → **Direct LLM Connections**
 3. Click **Test** for each (auto-saves on success)
-4. Go to **Council Config** → Enable "Direct Connections" → Select models
-5. Click **Save Changes**
+4. Go to **Council Config** → Enable "Direct Connections" → Select models (saves automatically)
 
 ### Option D: Use OpenCode Zen / Go
 - OpenCode ships both a free **Zen** tier (zero-cost `*-free` models — `minimax-m3-free`, `deepseek-v4-flash-free`, etc.) and a paid **Go** subscription tier (per-1M token pricing shown as an estimate; flagged with a subscription note in the cost report).

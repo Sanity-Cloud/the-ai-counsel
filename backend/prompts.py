@@ -1,5 +1,40 @@
 """Default system prompts for The AI Counsel."""
 
+RESPONSE_LANGUAGE_DEFAULT = "English"
+
+VALID_RESPONSE_LANGUAGES = (
+    "English",
+    "Spanish",
+    "French",
+    "German",
+    "Italian",
+    "Portuguese",
+    "Dutch",
+    "Polish",
+    "Russian",
+    "Ukrainian",
+    "Arabic",
+    "Hebrew",
+    "Hindi",
+    "Japanese",
+    "Korean",
+    "Chinese (Simplified)",
+    "Chinese (Traditional)",
+)
+
+
+def apply_response_language(content: str, language: str | None = None) -> str:
+    """Prepend a response-language instruction to a model prompt."""
+    lang = (language or RESPONSE_LANGUAGE_DEFAULT).strip() or RESPONSE_LANGUAGE_DEFAULT
+    if lang == RESPONSE_LANGUAGE_DEFAULT:
+        return content
+    instruction = (
+        f"You MUST respond in {lang}. "
+        f"Use {lang} for all prose, critiques, synthesis, and explanations."
+    )
+    return f"{instruction}\n\n{content}"
+
+
 STAGE1_PROMPT_DEFAULT = """You are a helpful AI assistant.
 {search_context_block}
 Question: {user_query}"""

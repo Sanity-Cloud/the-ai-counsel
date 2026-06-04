@@ -48,6 +48,8 @@ def register(server, base_url: str) -> None:
         debate_rounds: int | None = None,
         auto_converge: bool | None = None,
         convergence_threshold: int | None = None,
+        date_format: str | None = None,
+        response_language: str | None = None,
     ) -> str:
         action = action.strip().lower()
         valid = ("get", "update", "list_presets", "save_preset", "delete_preset", "set_default_preset")
@@ -74,6 +76,9 @@ def register(server, base_url: str) -> None:
                         "debate_rounds": settings.get("debate_rounds"),
                         "auto_converge": settings.get("auto_converge"),
                         "convergence_threshold": settings.get("convergence_threshold"),
+                        "date_format": settings.get("date_format"),
+                        "response_language": settings.get("response_language"),
+                        "valid_response_languages": settings.get("valid_response_languages", []),
                         "title_prompt": settings.get("title_prompt"),
                         "query_prompt": settings.get("query_prompt"),
                         "council_presets": settings.get("council_presets", []),
@@ -177,6 +182,13 @@ def register(server, base_url: str) -> None:
                     if not (1 <= convergence_threshold <= 3):
                         return "Error: convergence_threshold must be 1, 2, or 3."
                     updates["convergence_threshold"] = convergence_threshold
+                if date_format is not None:
+                    valid_date_formats = ("auto", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY-MM-DD")
+                    if date_format not in valid_date_formats:
+                        return f"Error: date_format must be one of: {', '.join(valid_date_formats)}."
+                    updates["date_format"] = date_format
+                if response_language is not None:
+                    updates["response_language"] = response_language
 
                 if not updates:
                     return "Error: no update fields provided."

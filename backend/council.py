@@ -9,6 +9,7 @@ from . import ollama_client
 from .config import get_council_models, get_chairman_model
 from .costs import attach_cost
 from .settings import get_settings
+from .prompts import apply_response_language
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +177,9 @@ async def stage1_collect_responses(
         logger.warning(f"Error formatting Stage 1 prompt: {e}. Using fallback.")
         prompt = f"{search_context_block}Question: {user_query}" if search_context_block else user_query
 
+    if messages_override is None and per_model_messages is None:
+        prompt = apply_response_language(prompt, settings.response_language)
+
     if messages_override is not None:
         messages = messages_override
     else:
@@ -327,6 +331,8 @@ async def stage2_collect_rankings(
                 f"Question: {user_query}\n\n{responses_text}\n\n"
                 f"Rank these responses. FINAL RANKING must include ONLY: {valid_label_list}."
             )
+
+    ranking_prompt = apply_response_language(ranking_prompt, settings.response_language)
 
     messages = [{"role": "user", "content": ranking_prompt}]
 
@@ -487,14 +493,13 @@ async def stage3_synthesize_final(
             logger.warning(f"Error formatting Stage 3 prompt: {e}. Using fallback.")
             chairman_prompt = f"Question: {user_query}\n\nSynthesis required."
 
-    # Determine message structure based on whether the prompt is default or custom
     from .prompts import STAGE3_PROMPT_DEFAULT
-    
+    chairman_prompt = apply_response_language(chairman_prompt, settings.response_language)
+
     # Check if we are using the default prompt (or if it's empty/None, which falls back to default)
     is_default_prompt = (not settings.stage3_prompt) or (settings.stage3_prompt.strip() == STAGE3_PROMPT_DEFAULT.strip())
 
     if is_default_prompt:
-        # If using default, split into System (Persona) and User (Data) for better adherence at low temp
         messages = [
             {"role": "system", "content": "You are the Chairman of an LLM Council. Your task is to synthesize the provided model responses into a single, comprehensive answer."},
             {"role": "user", "content": chairman_prompt}

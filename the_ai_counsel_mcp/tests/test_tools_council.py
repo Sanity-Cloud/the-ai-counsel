@@ -1,5 +1,6 @@
 """Tests for council management MCP tools."""
 
+import json
 import pytest
 import respx
 import httpx
@@ -298,6 +299,24 @@ async def test_configure_council_with_enabled_providers(server):
         })
         data = get_json(result)
         assert data["status"] == "updated"
+
+
+@pytest.mark.asyncio
+async def test_configure_council_with_response_language(server):
+    with respx.mock:
+        respx.put("http://test:8001/api/settings").mock(
+            return_value=httpx.Response(200, json={"success": True})
+        )
+        result = await server.call_tool("council_settings", {
+            "action": "update",
+            "response_language": "Spanish",
+            "date_format": "DD/MM/YYYY",
+        })
+        data = get_json(result)
+        assert data["status"] == "updated"
+        payload = json.loads(respx.calls.last.request.content)
+        assert payload["response_language"] == "Spanish"
+        assert payload["date_format"] == "DD/MM/YYYY"
 
 
 # ── set_api_key tests ────────────────────────────────────────────────────────

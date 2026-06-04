@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { formatTimestamp } from '../utils/dateFormat';
 import './Sidebar.css';
 
 const getConversationMode = (conversation) => (
@@ -6,29 +7,6 @@ const getConversationMode = (conversation) => (
 );
 
 const getConversationTitle = (conv) => conv.title || 'New Conversation';
-
-const DATE_FORMAT_OPTIONS = {
-  'auto':       undefined,
-  'MM/DD/YYYY': { year: 'numeric', month: '2-digit', day: '2-digit' },
-  'DD/MM/YYYY': { year: 'numeric', month: '2-digit', day: '2-digit' },
-  'YYYY-MM-DD': { year: 'numeric', month: '2-digit', day: '2-digit' },
-};
-
-const DATE_FORMAT_LOCALES = {
-  'auto':       undefined,
-  'MM/DD/YYYY': 'en-US',
-  'DD/MM/YYYY': 'en-GB',
-  'YYYY-MM-DD': 'sv-SE',
-};
-
-function formatTimestamp(isoString, dateFormat) {
-  const d = new Date(isoString);
-  const locale = DATE_FORMAT_LOCALES[dateFormat] || undefined;
-  const opts = DATE_FORMAT_OPTIONS[dateFormat] || undefined;
-  const datePart = d.toLocaleDateString(locale, opts);
-  const timePart = d.toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit' });
-  return `${datePart} ${timePart}`;
-}
 
 export default function Sidebar({
   conversations,

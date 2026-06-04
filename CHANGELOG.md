@@ -5,10 +5,22 @@ All notable changes to The AI Counsel will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Response language setting**: Council and advisor model outputs can be pinned to one of 17 languages via Settings → General → Response Language. Title generation and internal search queries stay in English.
+- **General settings section**: Display preferences (date format) and response language moved out of Backup & Reset into a dedicated General section at the top of Settings.
+- **API-driven language list**: `GET /api/settings` returns `valid_response_languages` and `response_language_default` so the UI and MCP read from one backend source (`VALID_RESPONSE_LANGUAGES` in `backend/prompts.py`).
+
+### Changed
+- **Date format location**: Settings → General → Display Preferences (was Backup & Reset).
+- **Settings auto-save**: All Settings sections now save automatically (debounced). The Save Changes button was removed; API keys still save on successful test.
+- **Invalid language/date on load/import**: Bad `response_language` or `date_format` values fall back to English / auto silently.
+
 ## [0.8.2] - 2026-06-03
 
 ### Added
-- **Configurable date format**: Conversation timestamps in the sidebar can now be set to Auto (browser locale), MM/DD/YYYY, DD/MM/YYYY, or YYYY-MM-DD via Settings → Backup & Reset → Display Preferences. The setting is retroactive — all existing conversations update immediately.
+- **Configurable date format**: Conversation timestamps in the sidebar can now be set to Auto (browser locale), MM/DD/YYYY, DD/MM/YYYY, or YYYY-MM-DD via Settings → General → Display Preferences. The setting is retroactive — all existing conversations update immediately.
 - **Release process documentation**: Added `docs/RELEASE.md` and AGENTS guidance so future maintainers and AI agents create both annotated Git tags and GitHub Releases for public versions.
 
 ### Changed

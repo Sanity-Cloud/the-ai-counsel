@@ -20,6 +20,7 @@ from .costs import build_advisor_cost_report, build_council_cost_report, build_i
 from .model_preflight import build_preflight_error_message, preflight_models
 from .search import perform_web_search, SearchProvider
 from .settings import get_settings, save_settings, update_settings, Settings, DEFAULT_COUNCIL_MODELS, DEFAULT_CHAIRMAN_MODEL, AVAILABLE_MODELS, PROMPT_DEFAULTS
+from .prompts import VALID_RESPONSE_LANGUAGES, RESPONSE_LANGUAGE_DEFAULT
 from .personas import get_all_personas, save_persona_override, delete_persona_override, get_persona
 from .advisors import run_debate
 from .debate import run_iterative_debate, MAX_DEBATE_ROUNDS
@@ -1403,6 +1404,7 @@ class UpdateSettingsRequest(BaseModel):
 
     # Display Preferences
     date_format: Optional[str] = None
+    response_language: Optional[str] = None
 
     # Execution Mode
     execution_mode: Optional[str] = None
@@ -1515,6 +1517,9 @@ async def get_app_settings():
 
         # Display Preferences
         "date_format": settings.date_format,
+        "response_language": settings.response_language,
+        "valid_response_languages": list(VALID_RESPONSE_LANGUAGES),
+        "response_language_default": RESPONSE_LANGUAGE_DEFAULT,
 
         # Iterative Debate
         "critique_mode": settings.critique_mode,
@@ -1533,6 +1538,8 @@ async def get_default_settings():
         "council_models": DEFAULT_COUNCIL_MODELS,
         "chairman_model": DEFAULT_CHAIRMAN_MODEL,
         "enabled_providers": DEFAULT_ENABLED_PROVIDERS,
+        "response_language_default": RESPONSE_LANGUAGE_DEFAULT,
+        "valid_response_languages": list(VALID_RESPONSE_LANGUAGES),
         **PROMPT_DEFAULTS,
     }
 
@@ -1556,7 +1563,9 @@ async def export_settings():
 @app.post("/api/settings/import", dependencies=[Depends(_require_admin)])
 async def import_settings(new_settings: Settings):
     """Import settings from a full settings JSON blob (admin-only)."""
-    save_settings(new_settings)
+    from .settings import _normalize_prompt_defaults
+    normalized = Settings(**_normalize_prompt_defaults(new_settings.model_dump()))
+    save_settings(normalized)
     return {"status": "imported", "message": "Settings imported successfully"}
 
 
@@ -1721,6 +1730,14 @@ async def update_app_settings(request: UpdateSettingsRequest):
             raise HTTPException(status_code=400, detail=f"Invalid date_format. Must be one of: {list(valid_formats)}")
         updates["date_format"] = request.date_format
 
+    if request.response_language is not None:
+        if request.response_language not in VALID_RESPONSE_LANGUAGES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid response_language. Must be one of: {VALID_RESPONSE_LANGUAGES}",
+            )
+        updates["response_language"] = request.response_language
+
     if request.execution_mode is not None:
         _validate_execution_mode(request.execution_mode)
         updates["execution_mode"] = request.execution_mode
@@ -1833,6 +1850,7 @@ async def update_app_settings(request: UpdateSettingsRequest):
 
         # Display Preferences
         "date_format": settings.date_format,
+        "response_language": settings.response_language,
 
         # Iterative Debate
         "critique_mode": settings.critique_mode,

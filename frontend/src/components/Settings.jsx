@@ -6,6 +6,8 @@ import CouncilConfig from './settings/CouncilConfig';
 import SearchSettings from './settings/SearchSettings';
 import PromptSettings from './settings/PromptSettings';
 import DebateSettings from './settings/DebateSettings';
+import GeneralSettings, { RESPONSE_LANGUAGE_DEFAULT } from './settings/GeneralSettings';
+import { RESPONSE_LANGUAGES_FALLBACK } from '../constants/responseLanguages';
 import './Settings.css';
 
 const PROMPT_FIELDS = [
@@ -68,6 +70,8 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
   const [searchResultCount, setSearchResultCount] = useState(8);
   const [searchHybridMode, setSearchHybridMode] = useState(true);
   const [dateFormat, setDateFormat] = useState('auto');
+  const [responseLanguage, setResponseLanguage] = useState(RESPONSE_LANGUAGE_DEFAULT);
+  const [responseLanguages, setResponseLanguages] = useState(RESPONSE_LANGUAGES_FALLBACK);
 
   // OpenRouter State
   const [openrouterApiKey, setOpenrouterApiKey] = useState('');
@@ -174,7 +178,6 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(false);
-  const [hasChanges, setHasChanges] = useState(false);
   const [validationErrors, setValidationErrors] = useState({});
 
   
@@ -192,47 +195,97 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
     setActiveSection(initialSection);
   }, [initialSection]);
 
-  // Check for changes
+  // Debounced auto-save for all settings (API keys still save on successful test)
+  const autoSaveTimerRef = useRef(null);
+  const isInitialLoadRef = useRef(true);
+
   useEffect(() => {
-    if (!settings) return;
+    if (!settings || isInitialLoadRef.current) return;
 
-    const checkChanges = () => {
-      if (selectedSearchProvider !== settings.search_provider) return true;
-      if (searchKeywordExtraction !== (settings.search_keyword_extraction || 'direct')) return true;
-      if (fullContentResults !== (settings.full_content_results ?? 3)) return true;
-      if (searchResultCount !== (settings.search_result_count ?? 8)) return true;
-      if (searchHybridMode !== (settings.search_hybrid_mode ?? true)) return true;
-      if (showFreeOnly !== (settings.show_free_only ?? false)) return true;
+    const settingsChanged =
+      selectedSearchProvider !== (settings.search_provider || 'duckduckgo') ||
+      searchKeywordExtraction !== (settings.search_keyword_extraction || 'direct') ||
+      fullContentResults !== (settings.full_content_results ?? 3) ||
+      searchResultCount !== (settings.search_result_count ?? 8) ||
+      searchHybridMode !== (settings.search_hybrid_mode ?? true) ||
+      showFreeOnly !== (settings.show_free_only ?? false) ||
+      dateFormat !== (settings.date_format || 'auto') ||
+      responseLanguage !== (settings.response_language || RESPONSE_LANGUAGE_DEFAULT) ||
+      JSON.stringify(enabledProviders) !== JSON.stringify(settings.enabled_providers) ||
+      JSON.stringify(directProviderToggles) !== JSON.stringify(settings.direct_provider_toggles) ||
+      JSON.stringify(councilModels) !== JSON.stringify(settings.council_models) ||
+      chairmanModel !== (settings.chairman_model || '') ||
+      councilTemperature !== (settings.council_temperature ?? 0.5) ||
+      chairmanTemperature !== (settings.chairman_temperature ?? 0.4) ||
+      stage2Temperature !== (settings.stage2_temperature ?? 0.3) ||
+      JSON.stringify(councilMemberFilters) !== JSON.stringify(settings.council_member_filters || {}) ||
+      chairmanFilter !== (settings.chairman_filter || 'remote') ||
+      PROMPT_FIELDS.some((key) => prompts[key] !== settings[key]) ||
+      critiqueMode !== (settings.critique_mode || 'freeform') ||
+      debateRounds !== (settings.debate_rounds || 1) ||
+      autoConverge !== (settings.auto_converge !== undefined ? settings.auto_converge : true) ||
+      convergenceThreshold !== (settings.convergence_threshold || 2);
 
-      // Enabled Providers
-      if (JSON.stringify(enabledProviders) !== JSON.stringify(settings.enabled_providers)) return true;
-      if (JSON.stringify(directProviderToggles) !== JSON.stringify(settings.direct_provider_toggles)) return true;
+    if (!settingsChanged) return;
 
-      // Council Configuration (unified)
-      if (JSON.stringify(councilModels) !== JSON.stringify(settings.council_models)) return true;
-      if (chairmanModel !== settings.chairman_model) return true;
-      if (councilTemperature !== (settings.council_temperature ?? 0.5)) return true;
-      if (chairmanTemperature !== (settings.chairman_temperature ?? 0.4)) return true;
-      if (stage2Temperature !== (settings.stage2_temperature ?? 0.3)) return true;
+    const councilChanged =
+      JSON.stringify(councilModels) !== JSON.stringify(settings.council_models) ||
+      chairmanModel !== (settings.chairman_model || '');
+    const hasValidCouncil = councilModels.some((m) => m && m.length > 0);
+    const hasValidChairman = chairmanModel && chairmanModel.length > 0;
+    if (councilChanged && !hasValidCouncil && !hasValidChairman) {
+      return;
+    }
 
-      // Remote/Local filters
-      if (JSON.stringify(councilMemberFilters) !== JSON.stringify(settings.council_member_filters || {})) return true;
-      if (chairmanFilter !== (settings.chairman_filter || 'remote')) return true;
-      // Prompts
-      if (PROMPT_FIELDS.some(key => prompts[key] !== settings[key])) return true;
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+    }
 
-      // Debate Settings
-      if (critiqueMode !== (settings.critique_mode || 'freeform')) return true;
-      if (debateRounds !== (settings.debate_rounds || 1)) return true;
-      if (autoConverge !== (settings.auto_converge !== undefined ? settings.auto_converge : true)) return true;
-      if (convergenceThreshold !== (settings.convergence_threshold || 2)) return true;
+    autoSaveTimerRef.current = setTimeout(async () => {
+      setIsSaving(true);
+      setError(null);
+      try {
+        const updates = {
+          search_provider: selectedSearchProvider,
+          search_keyword_extraction: searchKeywordExtraction,
+          full_content_results: fullContentResults,
+          search_result_count: searchResultCount,
+          search_hybrid_mode: searchHybridMode,
+          show_free_only: showFreeOnly,
+          date_format: dateFormat,
+          response_language: responseLanguage,
+          enabled_providers: enabledProviders,
+          direct_provider_toggles: directProviderToggles,
+          council_models: councilModels,
+          chairman_model: chairmanModel,
+          council_temperature: councilTemperature,
+          chairman_temperature: chairmanTemperature,
+          stage2_temperature: stage2Temperature,
+          council_member_filters: councilMemberFilters,
+          chairman_filter: chairmanFilter,
+          critique_mode: critiqueMode,
+          debate_rounds: debateRounds,
+          auto_converge: autoConverge,
+          convergence_threshold: convergenceThreshold,
+          ...prompts,
+        };
+        await api.updateSettings(updates);
+        setSettings((prev) => ({ ...prev, ...updates }));
+        setSuccess(true);
+        setTimeout(() => setSuccess(false), 2000);
+      } catch (err) {
+        console.error('Failed to auto-save settings:', err);
+        setError('Failed to save settings');
+      } finally {
+        setIsSaving(false);
+      }
+    }, 1000);
 
-      // Note: API keys are auto-saved on test, so we don't check them here
-
-      return false;
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+      }
     };
-
-    setHasChanges(checkChanges());
   }, [
     settings,
     selectedSearchProvider,
@@ -241,6 +294,8 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
     searchResultCount,
     searchHybridMode,
     showFreeOnly,
+    dateFormat,
+    responseLanguage,
     enabledProviders,
     directProviderToggles,
     councilModels,
@@ -311,70 +366,6 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
 
   }, [enabledProviders, chairmanFilter]);
 
-  // Auto-save council configuration with debounce
-  const autoSaveTimerRef = useRef(null);
-  const isInitialLoadRef = useRef(true);
-  const prevCouncilModelsRef = useRef(null);
-  const prevChairmanModelRef = useRef(null);
-
-  useEffect(() => {
-    // Skip auto-save on initial load
-    if (isInitialLoadRef.current) {
-      return;
-    }
-
-    // Skip if settings haven't loaded yet
-    if (!settings) {
-      return;
-    }
-
-    // Check if council models or chairman actually changed (not just re-rendered)
-    const councilModelsStr = JSON.stringify(councilModels);
-    const prevCouncilModelsStr = JSON.stringify(prevCouncilModelsRef.current);
-    const chairmanChanged = chairmanModel !== prevChairmanModelRef.current;
-    const councilChanged = councilModelsStr !== prevCouncilModelsStr;
-
-    if (!councilChanged && !chairmanChanged) {
-      return;
-    }
-
-    // Update refs
-    prevCouncilModelsRef.current = councilModels;
-    prevChairmanModelRef.current = chairmanModel;
-
-    // Skip if all values are empty (reset state)
-    const hasValidCouncil = councilModels.some(m => m && m.length > 0);
-    const hasValidChairman = chairmanModel && chairmanModel.length > 0;
-    if (!hasValidCouncil && !hasValidChairman) {
-      return;
-    }
-
-    // Clear any existing timer
-    if (autoSaveTimerRef.current) {
-      clearTimeout(autoSaveTimerRef.current);
-    }
-
-    // Debounce auto-save by 1 second
-    autoSaveTimerRef.current = setTimeout(async () => {
-      try {
-        await api.updateSettings({
-          council_models: councilModels,
-          chairman_model: chairmanModel
-        });
-        console.log('Auto-saved council configuration');
-      } catch (err) {
-        console.error('Failed to auto-save council configuration:', err);
-      }
-    }, 1000);
-
-    // Cleanup on unmount
-    return () => {
-      if (autoSaveTimerRef.current) {
-        clearTimeout(autoSaveTimerRef.current);
-      }
-    };
-  }, [councilModels, chairmanModel, settings]);
-
   // Clear validation errors when chairman or council members change
   useEffect(() => {
     if (Object.keys(validationErrors).length > 0) {
@@ -397,6 +388,7 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
   }, [chairmanModel, councilModels, validationErrors]);
 
   const loadSettings = async () => {
+    isInitialLoadRef.current = true;
     try {
       const data = await api.getSettings();
       let defaults = {};
@@ -421,6 +413,12 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
       setSearchHybridMode(data.search_hybrid_mode ?? true);
       setShowFreeOnly(data.show_free_only ?? false);
       setDateFormat(data.date_format || 'auto');
+      setResponseLanguage(data.response_language || RESPONSE_LANGUAGE_DEFAULT);
+      setResponseLanguages(
+        Array.isArray(data.valid_response_languages) && data.valid_response_languages.length > 0
+          ? data.valid_response_languages
+          : RESPONSE_LANGUAGES_FALLBACK
+      );
 
       // Enabled Providers — never show ON for sources that aren't configured
       if (data.enabled_providers) {
@@ -469,10 +467,6 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
       setChairmanTemperature(data.chairman_temperature ?? 0.4);
       setStage2Temperature(data.stage2_temperature ?? 0.3);
 
-      // Initialize refs for auto-save tracking (prevents auto-save on initial load)
-      prevCouncilModelsRef.current = loadedCouncilModels;
-      prevChairmanModelRef.current = loadedChairmanModel;
-      // Mark initial load as complete after a short delay to let state settle
       setTimeout(() => {
         isInitialLoadRef.current = false;
       }, 500);
@@ -893,14 +887,9 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
     }
   };
 
-  const handleDateFormatChange = async (newFormat) => {
-    setDateFormat(newFormat);
-    try {
-      await api.updateSettings({ date_format: newFormat });
-    } catch (err) {
-      console.error('Failed to save date format:', err);
-    }
-  };
+  const handleDateFormatChange = (newFormat) => setDateFormat(newFormat);
+
+  const handleResponseLanguageChange = (newLanguage) => setResponseLanguage(newLanguage);
 
   const handleResetToDefaults = () => {
     setShowResetConfirm(true);
@@ -947,6 +936,7 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
       setFullContentResults(3);
       setShowFreeOnly(false);
       setDateFormat('auto');
+      setResponseLanguage(RESPONSE_LANGUAGE_DEFAULT);
       setOllamaBaseUrl('http://localhost:11434');
 
       // Reset debate settings
@@ -997,12 +987,14 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
         debate_rounds: 1,
         auto_converge: true,
         convergence_threshold: 2,
+        date_format: 'auto',
+        response_language: RESPONSE_LANGUAGE_DEFAULT,
         ...defaultPrompts,
       };
       await api.updateSettings(updates);
 
+      await loadSettings();
       setSuccess(true);
-      // Navigate to Council Config so user sees the blank state
       setActiveSection('council');
 
       setTimeout(() => setSuccess(false), 3000);
@@ -1151,6 +1143,7 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
 
       // Display
       date_format: dateFormat,
+      response_language: responseLanguage,
 
       // Prompts
       prompts: prompts
@@ -1215,6 +1208,7 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
 
         // Apply Display Preferences
         if (config.date_format) setDateFormat(config.date_format);
+        if (config.response_language) setResponseLanguage(config.response_language);
 
         // Apply Prompts
         if (config.prompts) {
@@ -1241,80 +1235,6 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
     reader.readAsText(file);
     // Reset input
     event.target.value = '';
-  };
-
-  const handleSave = async () => {
-    setError(null);
-    setSuccess(false);
-    setValidationErrors({});
-    setIsSaving(true);
-
-    try {
-      const updates = {
-        search_provider: selectedSearchProvider,
-        search_keyword_extraction: searchKeywordExtraction,
-        full_content_results: fullContentResults,
-        search_result_count: searchResultCount,
-        search_hybrid_mode: searchHybridMode,
-        show_free_only: showFreeOnly,
-
-        // Enabled Providers
-        enabled_providers: enabledProviders,
-        direct_provider_toggles: directProviderToggles,
-
-        // Council Configuration (unified)
-        council_models: councilModels,
-        chairman_model: chairmanModel,
-        council_temperature: councilTemperature,
-        chairman_temperature: chairmanTemperature,
-        stage2_temperature: stage2Temperature,
-
-        // Remote/Local filters for each selection
-        council_member_filters: councilMemberFilters,
-        chairman_filter: chairmanFilter,
-        // Debate Settings
-        critique_mode: critiqueMode,
-        debate_rounds: debateRounds,
-        auto_converge: autoConverge,
-        convergence_threshold: convergenceThreshold,
-        // Prompts
-        ...prompts
-      };
-
-      // Only send API keys if they've been changed
-      if (tavilyApiKey && !tavilyApiKey.startsWith('•')) {
-        updates.tavily_api_key = tavilyApiKey;
-      }
-      if (braveApiKey && !braveApiKey.startsWith('•')) {
-        updates.brave_api_key = braveApiKey;
-      }
-      if (openrouterApiKey && !openrouterApiKey.startsWith('•')) {
-        updates.openrouter_api_key = openrouterApiKey;
-      }
-      if (groqApiKey && !groqApiKey.startsWith('•')) {
-        updates.groq_api_key = groqApiKey;
-      }
-
-      // Add Direct Provider Keys
-      Object.entries(directKeys).forEach(([key, value]) => {
-        if (value && !value.startsWith('•')) {
-          updates[key] = value;
-        }
-      });
-
-      await api.updateSettings(updates);
-      setSuccess(true);
-      setTavilyApiKey('');
-      setBraveApiKey('');
-      setOpenrouterApiKey('');
-
-      await loadSettings();
-      setTimeout(() => setSuccess(false), 3000);
-    } catch (err) {
-      setError('Failed to save settings');
-    } finally {
-      setIsSaving(false);
-    }
   };
 
   // Helper function to check if a direct provider is configured
@@ -1424,13 +1344,22 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
     <div className="settings-overlay" onClick={onClose}>
       <div className="settings-modal" onClick={e => e.stopPropagation()}>
         <div className="settings-header">
-          <h2>Settings</h2>
+          <div>
+            <h2>Settings</h2>
+            <p className="settings-header-subtitle">Changes save automatically</p>
+          </div>
           <button className="close-button" onClick={onClose}>&times;</button>
         </div>
 
         <div className="settings-body">
           {/* Sidebar Navigation */}
           <div className="settings-sidebar">
+            <button
+              className={`sidebar-nav-item ${activeSection === 'general' ? 'active' : ''}`}
+              onClick={() => setActiveSection('general')}
+            >
+              General
+            </button>
             <button
               className={`sidebar-nav-item ${activeSection === 'llm_keys' ? 'active' : ''}`}
               onClick={() => setActiveSection('llm_keys')}
@@ -1477,6 +1406,16 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
 
           {/* Main Content Area */}
           <div className="settings-main-panel">
+
+            {activeSection === 'general' && (
+              <GeneralSettings
+                dateFormat={dateFormat}
+                onDateFormatChange={handleDateFormatChange}
+                responseLanguage={responseLanguage}
+                onResponseLanguageChange={handleResponseLanguageChange}
+                responseLanguages={responseLanguages}
+              />
+            )}
 
             {/* API KEYS (LLM API Keys) */}
             {activeSection === 'llm_keys' && (
@@ -1646,34 +1585,6 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
                 <h3>Backup & Reset</h3>
 
                 <div className="subsection">
-                  <h4>Display Preferences</h4>
-                  <div className="setting-row" style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '8px' }}>
-                    <label htmlFor="date-format-select" style={{ whiteSpace: 'nowrap' }}>Date Format</label>
-                    <select
-                      id="date-format-select"
-                      value={dateFormat}
-                      onChange={(e) => handleDateFormatChange(e.target.value)}
-                      className="select-input"
-                      style={{ maxWidth: '220px' }}
-                    >
-                      <option value="auto">Auto (browser locale)</option>
-                      <option value="MM/DD/YYYY">MM/DD/YYYY (US)</option>
-                      <option value="DD/MM/YYYY">DD/MM/YYYY (Europe / intl.)</option>
-                      <option value="YYYY-MM-DD">YYYY-MM-DD (ISO)</option>
-                    </select>
-                    <span className="setting-hint" style={{ fontSize: '0.8rem', opacity: 0.6 }}>
-                      {dateFormat === 'auto'
-                        ? `Preview: ${new Date().toLocaleDateString()}`
-                        : `Preview: ${
-                            dateFormat === 'MM/DD/YYYY' ? new Date().toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' })
-                            : dateFormat === 'DD/MM/YYYY' ? new Date().toLocaleDateString('en-GB', { year: 'numeric', month: '2-digit', day: '2-digit' })
-                            : new Date().toLocaleDateString('sv-SE', { year: 'numeric', month: '2-digit', day: '2-digit' })
-                          }`}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="subsection" style={{ marginTop: '24px', paddingTop: '20px', borderTop: '1px solid rgba(255, 255, 255, 0.1)' }}>
                   <h4>Import / Export</h4>
                   <p className="section-description">
                     Save or restore your council configuration (models, prompts, settings).
@@ -1742,13 +1653,10 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
             <button className="cancel-button" onClick={onClose}>
               Close
             </button>
-            <button
-              className="save-button"
-              onClick={handleSave}
-              disabled={isSaving || !hasChanges}
-            >
-              {isSaving ? 'Saving...' : (success ? 'Saved!' : 'Save Changes')}
-            </button>
+            {isSaving && <span className="settings-autosave-status">Saving…</span>}
+            {!isSaving && success && (
+              <span className="settings-autosave-status saved">Saved</span>
+            )}
           </div>
         </div>
       </div>

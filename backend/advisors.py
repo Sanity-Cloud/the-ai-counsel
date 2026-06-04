@@ -18,6 +18,7 @@ from .advisor_prompts import (
     ADVISOR_TIEBREAKER_PROMPT,
     CONSENSUS_TAG_INSTRUCTION,
 )
+from .prompts import apply_response_language
 
 logger = logging.getLogger(__name__)
 
@@ -180,7 +181,11 @@ def _unpack_advisor_result(result: tuple) -> tuple:
 async def _query_neutral(model: str, prompt: str, temperature: float = 0.3) -> Dict[str, Any]:
     """Call a neutral (non-persona) model and return a normalized result dict."""
     try:
-        response = await query_model(model, [{"role": "user", "content": prompt}], temperature=temperature)
+        response = await query_model(
+            model,
+            [{"role": "user", "content": prompt}],
+            temperature=temperature,
+        )
         if response.get("error"):
             return {
                 "model": model,
@@ -335,8 +340,10 @@ async def run_debate(
                 consensus_tag=CONSENSUS_TAG_INSTRUCTION,
             )
 
+        localized_prompt = apply_response_language(prompt_template, settings.response_language)
+
         tasks = [asyncio.create_task(_query_advisor(
-            pid, prompt_template, personas_map, model_assignments, default_model, temperature
+            pid, localized_prompt, personas_map, model_assignments, default_model, temperature
         )) for pid in order]
 
         pending = set(tasks)
@@ -475,7 +482,11 @@ async def run_debate(
                 round_number=round_num,
                 round_transcript=round_transcript,
             )
-            extract_result = await _query_neutral(extract_model, extract_prompt, temperature=0.2)
+            extract_result = await _query_neutral(
+                extract_model,
+                apply_response_language(extract_prompt, settings.response_language),
+                temperature=0.2,
+            )
             if extract_result.get("error") or not extract_result.get("content"):
                 yield {
                     "type": "advisor_error",
@@ -506,7 +517,10 @@ async def run_debate(
             question=safe_question,
             transcript=transcript_text,
         )
-        tiebreaker_result = await _query_neutral(verdict_model, tiebreaker_prompt)
+        tiebreaker_result = await _query_neutral(
+            verdict_model,
+            apply_response_language(tiebreaker_prompt, settings.response_language),
+        )
 
         yield {"type": "advisor_tiebreaker", "data": tiebreaker_result}
 
@@ -530,7 +544,10 @@ async def run_debate(
     if tiebreaker_result and tiebreaker_result.get("content"):
         verdict_prompt += f"\n\nTiebreaker ruling:\n{tiebreaker_result['content']}"
 
-    verdict_data = await _query_neutral(verdict_model, verdict_prompt)
+    verdict_data = await _query_neutral(
+        verdict_model,
+        apply_response_language(verdict_prompt, settings.response_language),
+    )
 
     yield {"type": "advisor_verdict", "data": verdict_data}
 

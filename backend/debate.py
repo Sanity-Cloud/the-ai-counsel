@@ -6,6 +6,7 @@ import logging
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from .settings import get_settings
+from .prompts import apply_response_language
 from .config import get_council_models, get_chairman_model
 from .council import (
     stage1_collect_responses,
@@ -96,7 +97,11 @@ async def extract_canonical_claims(
     from .council import query_model
     from .json_repair import extract_json_block
 
-    prompt = CLAIM_EXTRACTION_PROMPT.format(responses_text=responses_text)
+    settings = get_settings()
+    prompt = apply_response_language(
+        CLAIM_EXTRACTION_PROMPT.format(responses_text=responses_text),
+        settings.response_language,
+    )
     messages = [{"role": "user", "content": prompt}]
 
     extractor = chairman_model or get_chairman_model()
@@ -445,7 +450,10 @@ async def run_iterative_debate(
                         own_claims_with_critiques=own_critiques,
                         top_claims_from_others=top_text,
                     )
-                    per_model_messages[model] = [{"role": "user", "content": prompt}]
+                    per_model_messages[model] = [{
+                        "role": "user",
+                        "content": apply_response_language(prompt, settings.response_language),
+                    }]
 
             elif effective_mode == "paragraph" and previous_rankings:
                 # Per-model personalized prompts for paragraph mode
@@ -467,7 +475,10 @@ async def run_iterative_debate(
                         own_paragraphs_with_critiques=own_paras,
                         top_paragraphs_from_others=top_paras,
                     )
-                    per_model_messages[model] = [{"role": "user", "content": prompt}]
+                    per_model_messages[model] = [{
+                        "role": "user",
+                        "content": apply_response_language(prompt, settings.response_language),
+                    }]
 
             elif execution_mode == "full" and previous_synthesis:
                 # Freeform mode (or fallback)
@@ -478,7 +489,10 @@ async def run_iterative_debate(
                     previous_synthesis=truncate_text(previous_synthesis, MAX_SYNTHESIS_CHARS),
                     previous_rankings_summary=_build_rankings_summary(previous_rankings or []),
                 )
-                messages_override = [{"role": "user", "content": round_prompt}]
+                messages_override = [{
+                    "role": "user",
+                    "content": apply_response_language(round_prompt, settings.response_language),
+                }]
             else:
                 # chat_ranking mode: feedback from rankings only
                 round_prompt = STAGE1_ROUND_N_CHAT_RANKING_PROMPT.format(
@@ -490,7 +504,10 @@ async def run_iterative_debate(
                     total_models=len(previous_rankings or []),
                     rank_feedback="Improve your response based on peer feedback.",
                 )
-                messages_override = [{"role": "user", "content": round_prompt}]
+                messages_override = [{
+                    "role": "user",
+                    "content": apply_response_language(round_prompt, settings.response_language),
+                }]
 
         # --- Stage 1 ---
         yield {"type": "stage1_start", "round": round_num}

@@ -302,10 +302,9 @@ Remote admin endpoints (`/api/settings/export`, `/api/settings/import`, `/api/se
 On first launch, configure at least one LLM provider in Settings:
 
 1. **LLM API Keys** — Enter API keys for your chosen providers (and Ollama URL / custom endpoint if used)
-2. **Council Config** (Settings) or **welcome-screen Council Setup** — add members and chairman; both edit the same saved lineup
-3. **Save Changes** (Settings only — welcome screen auto-saves)
+2. **Council Config** (Settings) or **welcome-screen Council Setup** — add members and chairman; both edit the same saved lineup (auto-saves)
 
-API keys **auto-save** when you click "Test" and the connection succeeds.
+Settings changes save automatically (~1 second after you stop editing). API keys **auto-save** when you click "Test" and the connection succeeds.
 
 **Provider toggles are global:** Settings → Council Config **provider toggles** control which sources appear in **all** model pickers — Council Setup and Advisor Setup alike. A provider must be both configured (API key) and enabled (toggle on) to show its models.
 

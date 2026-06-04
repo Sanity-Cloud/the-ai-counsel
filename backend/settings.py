@@ -97,7 +97,9 @@ from .prompts import (
     STAGE3_PROMPT_DEFAULT,
     TITLE_PROMPT_DEFAULT,
     QUERY_PROMPT_DEFAULT,
-    STAGE4_CORRECTED_DRAFT_PROMPT
+    STAGE4_CORRECTED_DRAFT_PROMPT,
+    RESPONSE_LANGUAGE_DEFAULT,
+    VALID_RESPONSE_LANGUAGES,
 )
 from .advisor_prompts import (
     ADVISOR_ROUND1_PROMPT,
@@ -170,6 +172,7 @@ class Settings(BaseModel):
     
     # Display Preferences
     date_format: str = "auto"  # "auto", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY-MM-DD"
+    response_language: str = RESPONSE_LANGUAGE_DEFAULT
 
     # Execution Mode
     execution_mode: str = "full"  # Default execution mode: 'chat_only', 'chat_ranking', 'full'
@@ -342,9 +345,22 @@ def _normalize_council_presets(raw_presets: Any) -> List[Dict[str, Any]]:
     return normalized
 
 
+VALID_DATE_FORMATS = ("auto", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY-MM-DD")
+
+
+def _normalize_display_preferences(data: dict) -> dict:
+    """Coerce invalid display preference values to safe defaults."""
+    normalized = dict(data)
+    if normalized.get("response_language") not in VALID_RESPONSE_LANGUAGES:
+        normalized["response_language"] = RESPONSE_LANGUAGE_DEFAULT
+    if normalized.get("date_format") not in VALID_DATE_FORMATS:
+        normalized["date_format"] = "auto"
+    return normalized
+
+
 def _normalize_prompt_defaults(data: dict) -> dict:
     """Backfill defaults for older settings files that persisted invalid values."""
-    normalized = dict(data)
+    normalized = _normalize_display_preferences(dict(data))
     for key, default in PROMPT_DEFAULTS.items():
         value = normalized.get(key)
         if not isinstance(value, str) or not value.strip():

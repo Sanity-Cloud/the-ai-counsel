@@ -188,8 +188,14 @@ Manage council configuration and presets.
 | `council_models` | string[] | `save_preset` | Members for preset (alias: `models`) |
 | `chairman_model` | string | `save_preset` | Chairman for preset (alias: `chairman`) |
 | `is_default` | boolean | `save_preset` | Mark as default preset |
+| `critique_mode` | string | `update` | `freeform`, `paragraph`, or `claim` |
+| `debate_rounds` | integer | `update` | Iterative debate rounds (1–5) |
+| `auto_converge` | boolean | `update` | Stop early when rankings stabilize |
+| `convergence_threshold` | integer | `update` | Consecutive stable rounds before early stop (1–3) |
+| `date_format` | string | `update` | Sidebar date format: `auto`, `MM/DD/YYYY`, `DD/MM/YYYY`, `YYYY-MM-DD` |
+| `response_language` | string | `update` | Council/advisor response language (see `valid_response_languages` on `get`) |
 
-**`get` response includes:** `council_models`, `chairman_model`, temperatures, `execution_mode`, search settings, debate settings, title/query prompts, and `council_presets`.
+**`get` response includes:** `council_models`, `chairman_model`, temperatures, `execution_mode`, search settings, debate settings, `date_format`, `response_language`, `valid_response_languages`, title/query prompts, and `council_presets`.
 
 **`update` success:**
 ```json

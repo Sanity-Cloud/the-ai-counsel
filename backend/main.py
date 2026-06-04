@@ -508,6 +508,7 @@ class ConversationMetadata(BaseModel):
     title: str
     mode: str = "council"
     message_count: int
+    run_summary: Optional[str] = None
 
 
 class Conversation(BaseModel):

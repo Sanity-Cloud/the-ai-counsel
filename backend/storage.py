@@ -141,30 +141,23 @@ def derive_run_summary(conversation: Dict[str, Any]) -> Optional[str]:
     else:
         execution_mode = metadata.get("execution_mode")
         critique_mode = metadata.get("critique_mode", "freeform")
-        rounds_configured = metadata.get("debate_rounds_configured")
-        is_debate_run = rounds_configured is not None
-        is_multi_round_debate = bool(rounds_configured and rounds_configured > 1)
-        is_structured_critique = critique_mode in {"paragraph", "claim"}
 
-        if is_debate_run or is_structured_critique:
-            rounds = (
-                metadata.get("debate_rounds_executed")
-                or rounds_configured
-                or 1
-            )
-            parts.append(f"{rounds} rnd")
-            if critique_mode != "freeform":
-                parts.append(CRITIQUE_MODE_LABELS.get(critique_mode, critique_mode))
-            if rounds > 1 and metadata.get("auto_converge"):
-                parts.append("Auto-converge")
-            if metadata.get("converged"):
-                parts.append("Converged early")
-        elif execution_mode == "chat_only":
+        if execution_mode == "chat_only":
             parts.append("Chat Only")
         elif execution_mode == "chat_ranking":
             parts.append("Chat + Ranking")
         elif execution_mode == "full":
-            parts.append("Full Deliberation")
+            rounds = (
+                metadata.get("debate_rounds_executed")
+                or metadata.get("debate_rounds_configured")
+                or 1
+            )
+            parts.append(f"{rounds} rnd")
+            parts.append(CRITIQUE_MODE_LABELS.get(critique_mode, critique_mode))
+            if rounds > 1 and metadata.get("auto_converge"):
+                parts.append("Auto-converge")
+            if metadata.get("converged"):
+                parts.append("Converged early")
 
     if metadata_used_search(metadata):
         parts.append("Search")

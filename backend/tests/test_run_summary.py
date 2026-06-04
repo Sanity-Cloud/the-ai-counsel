@@ -124,7 +124,7 @@ def test_run_summary_converged_early(tmp_path, monkeypatch):
     )
 
     listed = storage.list_conversations()
-    assert listed[0]["run_summary"] == "2 rnd · Auto-converge · Converged early"
+    assert listed[0]["run_summary"] == "2 rnd · Freeform · Auto-converge · Converged early"
 
 
 def test_run_summary_search_context_only(tmp_path, monkeypatch):
@@ -169,7 +169,7 @@ def test_run_summary_claim_critique_mode(tmp_path, monkeypatch):
 
 
 def test_run_summary_full_deliberation_standard(tmp_path, monkeypatch):
-    """Standard 3-stage council (non-debate) should not collapse to Search-only."""
+    """Standard 3-stage council (non-debate) is one freeform round."""
     _save_titled_conversation(
         tmp_path,
         monkeypatch,
@@ -187,7 +187,7 @@ def test_run_summary_full_deliberation_standard(tmp_path, monkeypatch):
     )
 
     listed = storage.list_conversations()
-    assert listed[0]["run_summary"] == "Full Deliberation · Search"
+    assert listed[0]["run_summary"] == "1 rnd · Freeform · Search"
 
 
 def test_run_summary_one_round_freeform_debate(tmp_path, monkeypatch):
@@ -209,4 +209,4 @@ def test_run_summary_one_round_freeform_debate(tmp_path, monkeypatch):
     )
 
     listed = storage.list_conversations()
-    assert listed[0]["run_summary"] == "1 rnd · Search"
+    assert listed[0]["run_summary"] == "1 rnd · Freeform · Search"

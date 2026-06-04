@@ -166,3 +166,47 @@ def test_run_summary_claim_critique_mode(tmp_path, monkeypatch):
 
     listed = storage.list_conversations()
     assert listed[0]["run_summary"] == "1 rnd · Claim-by-Claim"
+
+
+def test_run_summary_full_deliberation_standard(tmp_path, monkeypatch):
+    """Standard 3-stage council (non-debate) should not collapse to Search-only."""
+    _save_titled_conversation(
+        tmp_path,
+        monkeypatch,
+        "council-full",
+        "SaaS Pricing Model Comparison",
+        [{
+            "role": "assistant",
+            "stage1": [],
+            "stage3": {"response": "done"},
+            "metadata": {
+                "execution_mode": "full",
+                "web_search": True,
+            },
+        }],
+    )
+
+    listed = storage.list_conversations()
+    assert listed[0]["run_summary"] == "Full Deliberation · Search"
+
+
+def test_run_summary_one_round_freeform_debate(tmp_path, monkeypatch):
+    _save_titled_conversation(
+        tmp_path,
+        monkeypatch,
+        "council-freeform-1",
+        "Quick Debate",
+        [{
+            "role": "assistant",
+            "stage1": [],
+            "metadata": {
+                "execution_mode": "full",
+                "debate_rounds_configured": 1,
+                "critique_mode": "freeform",
+                "web_search": True,
+            },
+        }],
+    )
+
+    listed = storage.list_conversations()
+    assert listed[0]["run_summary"] == "1 rnd · Search"

@@ -12,12 +12,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **General settings section**: Display preferences (date format) and response language moved out of Backup & Reset into a dedicated General section at the top of Settings.
 - **API-driven language list**: `GET /api/settings` returns `valid_response_languages` and `response_language_default` so the UI and MCP read from one backend source (`VALID_RESPONSE_LANGUAGES` in `backend/prompts.py`).
 - **Sidebar run summaries**: After a titled council or advisor run completes, the sidebar shows a compact line (rounds, critique mode, auto-converge, advisor personas, consensus, search). Sidebar search matches this line. `GET /api/conversations` index entries may include optional `run_summary`.
-- **Sidebar conversation cost**: Each sidebar card shows a yellow cumulative cost pill (sum of all assistant `cost_report` totals in the thread, including follow-ups). `GET /api/conversations` may include `total_cost`, `cost_status`, and `total_calls`.
+- **Sidebar conversation cost**: Each sidebar card shows a yellow cumulative cost pill (sum of all assistant `cost_report` totals in the thread, including follow-ups). `GET /api/conversations` may include `total_cost`, `cost_status` (`known` | `estimated` | `partial` | `free`), and `total_calls`. Existing threads backfill on next save or after `rebuild_index()`.
 
 ### Changed
 - **Date format location**: Settings → General → Display Preferences (was Backup & Reset).
+- **Sidebar timestamps**: Conversation cards show date and time on separate lines (respects Settings → General date format via `formatDatePart` / `formatTimePart`).
 - **Settings auto-save**: All Settings sections now save automatically (debounced). The Save Changes button was removed; API keys still save on successful test.
 - **Invalid language/date on load/import**: Bad `response_language` or `date_format` values fall back to English / auto silently.
+
+### Fixed
+- **Sidebar run summaries missing from API**: `ConversationMetadata` in `GET /api/conversations` now includes `run_summary` (and cost index fields) so FastAPI no longer strips them from list responses.
+- **Sidebar “Search”-only summaries**: Standard Full Deliberation runs (3-stage council, not iterative debate) now show `Full Deliberation · Search` instead of just `Search`. One-round freeform debates show `1 rnd · Search`.
 
 ## [0.8.2] - 2026-06-03
 

@@ -142,10 +142,11 @@ def derive_run_summary(conversation: Dict[str, Any]) -> Optional[str]:
         execution_mode = metadata.get("execution_mode")
         critique_mode = metadata.get("critique_mode", "freeform")
         rounds_configured = metadata.get("debate_rounds_configured")
+        is_debate_run = rounds_configured is not None
         is_multi_round_debate = bool(rounds_configured and rounds_configured > 1)
         is_structured_critique = critique_mode in {"paragraph", "claim"}
 
-        if is_multi_round_debate or is_structured_critique:
+        if is_debate_run or is_structured_critique:
             rounds = (
                 metadata.get("debate_rounds_executed")
                 or rounds_configured
@@ -162,6 +163,8 @@ def derive_run_summary(conversation: Dict[str, Any]) -> Optional[str]:
             parts.append("Chat Only")
         elif execution_mode == "chat_ranking":
             parts.append("Chat + Ranking")
+        elif execution_mode == "full":
+            parts.append("Full Deliberation")
 
     if metadata_used_search(metadata):
         parts.append("Search")

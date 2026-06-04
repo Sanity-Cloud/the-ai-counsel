@@ -37,6 +37,17 @@ When bumping version, update **all three together** (see `AGENTS.md` → Version
 | `the_ai_counsel_mcp/tests/test_tools_*.py` | Assertions on new fields |
 | `CHANGELOG.md` | Added/changed/fixed |
 
+### General settings / response language
+
+| File | Action |
+|------|--------|
+| `backend/prompts.py` | `VALID_RESPONSE_LANGUAGES`, `apply_response_language()` — injected before council/advisor/debate prompts; title/search query stay English |
+| `backend/settings.py` | `response_language` field; invalid values fall back to English on load/import |
+| `frontend/src/components/GeneralSettings.jsx` | Date format + response language (Settings → General) |
+| `skills/the-ai-counsel-api/SKILL.md` | GET keys `response_language`, `valid_response_languages`, `response_language_default` |
+| `AGENTS.md` | 8-section Settings list; General first; auto-save behavior |
+| `CHANGELOG.md` | User-facing General section and language list |
+
 ### Council behavior (members, chairman, streaming, execution modes)
 
 | File | Action |
@@ -83,7 +94,8 @@ When bumping version, update **all three together** (see `AGENTS.md` → Version
 |------|--------|
 | `backend/storage.py` | `derive_run_summary`, `derive_conversation_cost`, `_build_index_entry`, index field shape |
 | `backend/main.py` | `ConversationMetadata` must include all index fields (`run_summary`, `total_cost`, `cost_status`, `total_calls`); assistant metadata that feeds summaries |
-| `frontend/src/components/Sidebar.jsx` | Render `conv.run_summary` and cost pill; sidebar search includes summary text |
+| `frontend/src/components/Sidebar.jsx` | Render stacked date/time, `conv.run_summary`, and cost pill; sidebar search includes summary text |
+| `frontend/src/utils/dateFormat.js` | `formatDatePart` / `formatTimePart` for sidebar timestamp layout (respects `date_format` setting) |
 | `frontend/src/utils/formatCost.js` | Shared USD formatting for sidebar pill and `CostReport.jsx` |
 | `frontend/src/constants/critiqueMode.js` | Compact critique labels — keep in sync with `CRITIQUE_MODE_LABELS` in `backend/storage.py` |
 | `backend/tests/test_run_summary.py` | Summary string contract |
@@ -94,7 +106,8 @@ Rules:
 - Summary appears only after title is assigned (not while title is `"New Conversation"`).
 - Cost appears once any assistant message has `metadata.cost_report` (includes follow-up totals).
 - Server builds index fields; frontend displays index data only.
-- Existing conversations need a save or `rebuild_index()` to backfill index entries.
+- Existing conversations need a save or `rebuild_index()` to backfill index entries (`run_summary` and cost fields).
+- Sidebar shows date on one line and time on the next; do not collapse back to a single timestamp string without updating `Sidebar.jsx` and this checklist.
 
 ### MCP-only (new/changed tools)
 

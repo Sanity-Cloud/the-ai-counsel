@@ -251,7 +251,7 @@ Valid IDs: `skeptic`, `pragmatist`, `innovator`, `historian`, `ethicist`, `analy
 | `action` | string | Yes | `list`, `get`, or `progress` |
 | `conversation_id` | string | For `get`/`progress` | Conversation UUID |
 
-`list` returns human-readable text. `get` returns JSON summary with truncated user content and chairman synthesis excerpts. `progress` returns live progress of an active streaming run — `{active: true, stage, progress, stage1, stage2, stage3, stage4}` or `{active: false}` if idle.
+`list` returns human-readable text (title, mode, message count, created date). For index metadata such as `run_summary`, `total_cost`, `cost_status`, and `total_calls`, use REST `GET /api/conversations` (see SKILL §12b). `get` returns JSON summary with truncated user content and chairman synthesis excerpts. `progress` returns live progress of an active streaming run — `{active: true, stage, progress, stage1, stage2, stage3, stage4}` or `{active: false}` if idle.
 
 ---
 

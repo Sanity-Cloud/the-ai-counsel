@@ -83,7 +83,7 @@ This fixes binary incompatibilities (e.g., `@rollup/rollup-darwin-*` variants).
 | `costs.py` | Usage normalization, pricing lookup/cache, per-call cost attribution, and run-level cost reports |
 | `prompts.py` | Default system prompts for all stages (Stage 1/2/3, Title, Query) |
 | `main.py` | FastAPI app with streaming SSE endpoints, live progress tracking (`_active_runs`), and MCP server mount |
-| `storage.py` | Conversation persistence in `data/conversations/{id}.json` |
+| `storage.py` | Conversation persistence in `data/conversations/{id}.json`; index entries include optional `run_summary`, `total_cost`, `cost_status`, `total_calls` via `derive_run_summary()` / `derive_conversation_cost()` |
 
 ### Frontend (`frontend/src/`)
 
@@ -94,12 +94,12 @@ This fixes binary incompatibilities (e.g., `@rollup/rollup-darwin-*` variants).
 | `Stage1.jsx` | Tab view of individual model responses |
 | `Stage2.jsx` | Peer rankings with de-anonymization, aggregate scores |
 | `Stage3.jsx` | Chairman synthesis (final answer) |
-| `CostReport.jsx` | Compact run-cost panel with total cost, token/call counts, confidence status, and per-model breakdown |
+| `CostReport.jsx` | Compact run-cost panel with total cost, token/call counts, confidence status, and per-model breakdown (uses `formatCost.js`) |
 | `CouncilGrid.jsx` | Visual grid of council members with provider icons |
 | `CouncilSetup.jsx` | Inline council editor on welcome screen (members, chairman, presets; auto-save) |
 | `Settings.jsx` | 8-section settings: General, LLM API Keys, Council Config, Council Debate Config, Council System Prompts, Advisor System Prompts, Search Providers, Backup & Reset |
 | `GeneralSettings.jsx` | Date format and response language (General section) |
-| `Sidebar.jsx` | Conversation list with run summaries, cumulative cost pill, sidebar search on summary text, inline delete confirmation |
+| `Sidebar.jsx` | Conversation list with stacked date/time, run summaries, cumulative cost pill, sidebar search on summary text, inline delete confirmation |
 | `SearchableModelSelect.jsx` | Searchable dropdown for model selection |
 
 **Styling**: "Council Chamber" dark theme (refined Midnight Glass). CSS variables in `index.css` (`--font-display`: Syne, `--font-ui`: Plus Jakarta Sans, `--font-content`: Source Serif 4, `--font-code`: JetBrains Mono). Primary accent blue (#3b82f6), chairman gold (#fbbf24). Staggered hero/card animations; glass panels with backdrop-filter.
@@ -312,7 +312,7 @@ curl https://your-endpoint.com/v1/models -H "Authorization: Bearer $API_KEY"
 ## Settings
 
 **UI Sections** (sidebar navigation):
-1. **General**: Display preferences (date format) and response language for council/advisor model outputs
+1. **General**: Display preferences (date format) and response language for council/advisor model outputs. Language is injected at runtime via `apply_response_language()` in `prompts.py` (not editable in system prompt tabs); title and search-query generation stay English.
 2. **LLM API Keys**: OpenRouter, Groq, Ollama, Direct providers, Custom endpoint
 3. **Council Config**: **Global** provider toggles — Local (Ollama) standalone, Remote APIs master toggle with OpenRouter, Groq, Custom, and Direct Connections underneath. Temperature controls for all three stages (Council Heat, Peer Ranking Heat, Chairman Heat). Model selection (members/chairman) is handled exclusively on the welcome screen via Council Setup.
 4. **Council Debate Config**: Critique mode, debate rounds, auto-converge, convergence threshold

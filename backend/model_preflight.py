@@ -29,32 +29,22 @@ PREFLIGHT_MAX_WALL_SECONDS = 12.0
 
 
 def _is_transient_rate_limit(status_code: int, message: str) -> bool:
-    """Classify an error as a transient rate-limit.
+    """Classify an error as a transient rate-limit or temporary service congestion.
 
-    Match priority (most stable -> least stable):
-      1. HTTP status code 429  (canonical rate-limit signal)
-      2. HTTP status code 503  combined with Notion-specific body markers
-      3. Substring match on the error message as a last-resort fallback
-
-    Fallback substring set: "notion rate limit", "rate limit", "rate_limit",
-    "429", "too many requests", "quota", "throttl".
+    Matches HTTP 429 (Too Many Requests), HTTP 503 (Service Unavailable),
+    or error messages containing typical rate-limiting, quota, or throttling phrases.
     """
-    if status_code == 429:
+    if status_code in (429, 503):
         return True
     body = (message or "").lower()
-    if status_code == 503 and any(
-        m in body for m in ("notion_429", "rate_limit", "rate limit", "fileimporterror")
-    ):
-        return True
     if status_code not in {200, 0} and any(
-        m in body for m in ("notion rate limit", "rate_limit", "too many requests", "throttl", "quota")
+        m in body for m in ("rate limit", "rate_limit", "too many requests", "throttl", "quota", "temporary", "congestion")
     ):
         return True
     # Pure text match when there is no status code at all
     if status_code == 0 and any(
         m in body for m in (
-            "notion rate limit", "rate limit", "rate_limit",
-            "429", "too many requests", "quota", "throttl",
+            "rate limit", "rate_limit", "429", "too many requests", "quota", "throttl", "temporary", "congestion"
         )
     ):
         return True
@@ -189,8 +179,8 @@ async def _preflight_one_with_retry(
     elapsed_ms = int((time.monotonic() - wall_start) * 1000)
     logger.warning(
         "preflight.soft_fail.rate_limited: model=%s attempts=%d elapsed_ms=%d "
-        "http_status=%s last_error_class=NotionRateLimit -- "
-        "allowing run to proceed; Notion may throttle the actual request",
+        "http_status=%s last_error_class=RateLimit -- "
+        "allowing run to proceed; endpoint may throttle the actual request",
         model,
         PREFLIGHT_RATE_LIMIT_RETRIES + 1,
         elapsed_ms,

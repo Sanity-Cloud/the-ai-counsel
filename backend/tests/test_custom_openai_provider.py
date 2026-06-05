@@ -166,3 +166,61 @@ async def test_custom_openai_503_no_marker_fails_fast(fake_httpx, fake_settings,
     assert result["error"] is True
     assert "API error" in result["error_message"]
     assert len(mock_sleep) == 0
+
+
+@pytest.mark.asyncio
+async def test_custom_openai_supports_attachments(fake_settings):
+    provider = CustomOpenAIProvider()
+    
+    # Test setting false
+    fake_settings.__class__.custom_endpoint_supports_attachments = False
+    assert provider._supports_attachments() is False
+
+    # Test setting true
+    fake_settings.__class__.custom_endpoint_supports_attachments = True
+    assert provider._supports_attachments() is True
+
+
+@pytest.mark.asyncio
+async def test_custom_openai_attachment_retry_config(fake_settings):
+    provider = CustomOpenAIProvider()
+    
+    # Defaults
+    fake_settings.__class__.attachment_max_attempts = 3
+    fake_settings.__class__.attachment_retry_delay_seconds = 35.0
+    
+    retries, delay = provider._attachment_retry_config()
+    assert retries == 2
+    assert delay == 35.0
+
+
+@pytest.mark.asyncio
+async def test_custom_openai_attachment_query_retries_and_progressive_backoff(fake_httpx, fake_settings, mock_sleep):
+    fake_settings.__class__.custom_endpoint_supports_attachments = True
+    fake_settings.__class__.attachment_max_attempts = 3
+    fake_settings.__class__.attachment_retry_delay_seconds = 10.0
+
+    # Rate limit twice, then succeed
+    fake_httpx.responses.extend([
+        (429, {}, "Too many requests"),
+        (429, {}, "Too many requests"),
+        (200, {"choices": [{"message": {"content": "with attachment"}}]}, ""),
+    ])
+
+    provider = CustomOpenAIProvider()
+    result = await provider.query(
+        "custom:my-model",
+        [{"role": "user", "content": "hi"}],
+        attachments=[{"name": "test.txt", "content": "data"}]
+    )
+
+    assert result["error"] is False
+    assert result["content"] == "with attachment"
+    # progressive backoff: base * 1, base * 2, followed by post-call delay (default 20s)
+    assert len(mock_sleep) == 3
+    assert mock_sleep[0] == 10.0
+    assert mock_sleep[1] == 20.0
+    assert mock_sleep[2] == 20.0
+
+
+

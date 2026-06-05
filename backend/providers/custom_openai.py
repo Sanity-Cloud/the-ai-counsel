@@ -24,6 +24,8 @@ _DEFAULT_RATE_LIMIT_BASE_DELAY = 1.0
 # Jitter ceiling added to each backoff interval (seconds).
 _DEFAULT_RATE_LIMIT_JITTER = 0.5
 
+# Semaphore to serialize attachment uploads across provider instances
+_ATTACHMENT_UPLOAD_SEMAPHORE = asyncio.Semaphore(1)
 
 def _is_rate_limited(status_code: int, response_text: str) -> bool:
     """Return True when the response indicates a transient rate-limit.
@@ -102,7 +104,73 @@ class CustomOpenAIProvider(LLMProvider):
             base_delay = _DEFAULT_RATE_LIMIT_BASE_DELAY
         return max_retries, base_delay, _DEFAULT_RATE_LIMIT_JITTER
 
-    async def query(self, model_id: str, messages: List[Dict[str, str]], timeout: float = 120.0, temperature: float = 0.7, attachments: List[Dict[str, Any]] | None = None) -> Dict[str, Any]:
+    def _supports_attachments(self) -> bool:
+        """Check if custom endpoint supports attachments."""
+        settings = get_settings()
+        return getattr(settings, "custom_endpoint_supports_attachments", False)
+
+    def _attachment_retry_config(self) -> tuple[int, float]:
+        """Return (max_retries, base_delay) for attachment rate-limit backoff."""
+        settings = get_settings()
+        try:
+            max_attempts = max(1, int(getattr(
+                settings, "attachment_max_attempts",
+                os.getenv("LLM_COUNCIL_ATTACHMENT_MAX_ATTEMPTS", "3")
+            )))
+            max_retries = max_attempts - 1
+        except (TypeError, ValueError):
+            max_retries = 2
+        try:
+            base_delay = max(0.0, float(getattr(
+                settings, "attachment_retry_delay_seconds",
+                os.getenv("LLM_COUNCIL_ATTACHMENT_RETRY_DELAY_SECONDS", "35.0")
+            )))
+        except (TypeError, ValueError):
+            base_delay = 35.0
+        return max_retries, base_delay
+
+    def _attachment_delay_seconds(self) -> float:
+        """Delay between attachment-bearing custom endpoint calls to avoid rate limits."""
+        settings = get_settings()
+        try:
+            return max(0.0, float(getattr(settings, "attachment_delay_seconds", 20.0)))
+        except (TypeError, ValueError):
+            pass
+        raw = os.getenv("LLM_COUNCIL_ATTACHMENT_DELAY_SECONDS", "20")
+        try:
+            return max(0.0, float(raw))
+        except (TypeError, ValueError):
+            return 20.0
+
+    async def _maybe_pause_after_attachment_call(self) -> None:
+        delay = self._attachment_delay_seconds()
+        if delay > 0:
+            await asyncio.sleep(delay)
+
+    async def query(
+        self,
+        model_id: str,
+        messages: List[Dict[str, str]],
+        timeout: float = 120.0,
+        temperature: float = 0.7,
+        attachments: List[Dict[str, Any]] | None = None
+    ) -> Dict[str, Any]:
+        if attachments and self._supports_attachments():
+            async with _ATTACHMENT_UPLOAD_SEMAPHORE:
+                res = await self._query_execute(model_id, messages, timeout, temperature, attachments)
+                await self._maybe_pause_after_attachment_call()
+                return res
+        else:
+            return await self._query_execute(model_id, messages, timeout, temperature, None)
+
+    async def _query_execute(
+        self,
+        model_id: str,
+        messages: List[Dict[str, str]],
+        timeout: float = 120.0,
+        temperature: float = 0.7,
+        attachments: List[Dict[str, Any]] | None = None
+    ) -> Dict[str, Any]:
         name, base_url, api_key = self._get_config()
 
         if not base_url:
@@ -116,9 +184,18 @@ class CustomOpenAIProvider(LLMProvider):
             base_url = base_url[:-1]
 
         try:
+            settings = get_settings()
             headers = {"Content-Type": "application/json"}
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
+
+            # Pass the custom poll configuration in request headers if supported
+            poll_interval = getattr(settings, "attachment_poll_interval_seconds", 2.0)
+            poll_timeout = getattr(settings, "attachment_poll_timeout_seconds", 60.0)
+            headers["X-Attachment-Poll-Interval"] = str(poll_interval)
+            headers["X-Attachment-Poll-Timeout"] = str(poll_timeout)
+            headers["X-Notion-Poll-Interval"] = str(poll_interval)
+            headers["X-Notion-Poll-Timeout"] = str(poll_timeout)
 
             payload = add_temperature_if_supported(
                 {
@@ -130,9 +207,19 @@ class CustomOpenAIProvider(LLMProvider):
                 temperature,
             )
 
+            if attachments:
+                payload["attachments"] = attachments
+
             start_time = time.monotonic()
             attempts_info = []
-            rate_limit_retries, rate_limit_base, rate_limit_jitter = self._rate_limit_retry_config()
+
+            has_attachments = bool(attachments)
+            if has_attachments:
+                rate_limit_retries, rate_limit_base = self._attachment_retry_config()
+                rate_limit_jitter = 0.0
+            else:
+                rate_limit_retries, rate_limit_base, rate_limit_jitter = self._rate_limit_retry_config()
+
             max_attempts = 1 + rate_limit_retries
 
             async with httpx.AsyncClient(timeout=timeout) as client:
@@ -203,7 +290,12 @@ class CustomOpenAIProvider(LLMProvider):
                         )
                         break
 
-                    sleep_time = rate_limit_base * (2 ** attempt) + random.uniform(0, rate_limit_jitter)
+                    if has_attachments:
+                        # Linear/progressive backoff for attachments to match previous implementation
+                        sleep_time = rate_limit_base * attempt_idx
+                    else:
+                        sleep_time = rate_limit_base * (2 ** attempt) + random.uniform(0, rate_limit_jitter)
+
                     logger.warning(
                         "custom_openai: rate-limited on %s (attempt %d/%d, HTTP %s) "
                         "-- retrying in %.2fs",
@@ -256,6 +348,7 @@ class CustomOpenAIProvider(LLMProvider):
             return {"error": True, "error_message": f"Connection failed — check the {name} endpoint URL"}
         except Exception as e:
             return {"error": True, "error_message": str(e) or repr(e)}
+
 
     async def get_models(self) -> List[Dict[str, Any]]:
         name, base_url, api_key = self._get_config()

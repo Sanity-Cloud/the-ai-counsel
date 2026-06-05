@@ -462,11 +462,13 @@ export const api = {
       executionMode = 'full',
       councilModels = null,
       chairmanModel = null,
+      attachments = [],
     } = options;
     const body = {
       content,
       search_provider: searchProvider,
       execution_mode: executionMode,
+      attachments,
     };
     if (councilModels && councilModels.length > 0) {
       body.council_models = councilModels;

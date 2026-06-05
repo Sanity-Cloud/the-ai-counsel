@@ -122,8 +122,11 @@ export default function ChatInterface({
     debateRounds = 1,
     autoConverge = true,
     convergenceThreshold = 2,
+    attachmentsEnabled = false,
 }) {
     const [input, setInput] = useState('');
+    const [attachments, setAttachments] = useState([]);
+    const fileInputRef = useRef(null);
     const [activeSearchProvider, setActiveSearchProvider] = useState(null);
     const [searchPopoverOpen, setSearchPopoverOpen] = useState(false);
     const searchPopoverRef = useRef(null);
@@ -172,11 +175,63 @@ export default function ChatInterface({
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, [searchPopoverOpen]);
 
+    const readFileAsAttachment = (file) => new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve({
+            name: file.name,
+            content_type: file.type || 'application/octet-stream',
+            file_data: reader.result,
+        });
+        reader.onerror = () => reject(reader.error || new Error(`Could not read ${file.name}`));
+        reader.readAsDataURL(file);
+    });
+
+    const handleAttachFiles = async (event) => {
+        const files = Array.from(event.target.files || []);
+        event.target.value = '';
+        if (!files.length) return;
+
+        const remaining = Math.max(0, 5 - attachments.length);
+        const selected = files.slice(0, remaining);
+        const maxBytes = 20 * 1024 * 1024;
+        const allowed = new Set(['application/pdf', 'text/csv', 'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/heic']);
+
+        const next = [];
+        for (const file of selected) {
+            const type = file.type || 'application/octet-stream';
+            if (file.size > maxBytes || !allowed.has(type)) {
+                next.push({
+                    name: file.name,
+                    content_type: type,
+                    error: file.size > maxBytes ? 'File is over 20 MB' : `Unsupported type: ${type}`,
+                });
+                continue;
+            }
+            try {
+                const loaded = await readFileAsAttachment(file);
+                next.push(loaded);
+            } catch (err) {
+                next.push({
+                    name: file.name,
+                    content_type: type,
+                    error: err.message || 'Read error',
+                });
+            }
+        }
+        setAttachments(prev => [...prev, ...next]);
+    };
+
+    const removeAttachment = (index) => {
+        setAttachments(prev => prev.filter((_, i) => i !== index));
+    };
+
     const handleSubmit = (e) => {
         e.preventDefault();
-        if (input.trim() && !isLoading) {
-            onSendMessage(input, activeSearchProvider);
+        const validAttachments = attachments.filter(item => !item.error);
+        if ((input.trim() || validAttachments.length) && !isLoading) {
+            onSendMessage(input.trim() || 'Please analyze the attached file(s).', activeSearchProvider, validAttachments);
             setInput('');
+            setAttachments([]);
         }
     };
 
@@ -299,7 +354,18 @@ export default function ChatInterface({
 
                             <div className="message-content">
                                 {msg.role === 'user' ? (
-                                    <MarkdownContent>{msg.content}</MarkdownContent>
+                                    <>
+                                        <MarkdownContent>{msg.content}</MarkdownContent>
+                                        {msg.attachments?.length > 0 && (
+                                            <div className="message-attachments">
+                                                {msg.attachments.map((file, fileIndex) => (
+                                                    <span className="attachment-pill" key={`${file.name}-${fileIndex}`}>
+                                                        📎 {file.name}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </>
                                 ) : (msg.mode === 'advisors' || msg.type === 'advisor_debate') ? (
                                     <DebateView
                                         personas={msg.personas || []}
@@ -401,6 +467,28 @@ export default function ChatInterface({
                                 )}
                             </div>
 
+                            {attachmentsEnabled && (
+                                <>
+                                    <button
+                                        type="button"
+                                        className="attach-button"
+                                        onClick={() => fileInputRef.current?.click()}
+                                        disabled={isLoading || attachments.length >= 5}
+                                        title="Attach files"
+                                    >
+                                        📎
+                                    </button>
+                                    <input
+                                        ref={fileInputRef}
+                                        className="attachment-file-input"
+                                        type="file"
+                                        multiple
+                                        accept=".pdf,.csv,image/png,image/jpeg,image/gif,image/webp,image/heic"
+                                        onChange={handleAttachFiles}
+                                    />
+                                </>
+                            )}
+
                             <textarea
                                 className="message-input"
                                 placeholder={isLoading ? "Consulting..." : "Ask the Council..."}
@@ -417,11 +505,23 @@ export default function ChatInterface({
                                     ⏹
                                 </button>
                             ) : (
-                                <button type="submit" className="send-button" disabled={!input.trim()}>
+                                <button type="submit" className="send-button" disabled={!input.trim() && !attachments.some(item => !item.error)}>
                                     ➤
                                 </button>
                             )}
                         </div>
+
+                        {attachments.length > 0 && (
+                            <div className="attachment-tray">
+                                {attachments.map((file, index) => (
+                                    <span className={`attachment-chip ${file.error ? 'error' : ''}`} key={`${file.name}-${index}`}>
+                                        📎 {file.name}
+                                        {file.error && <span className="attachment-error"> — {file.error}</span>}
+                                        <button type="button" onClick={() => removeAttachment(index)} aria-label={`Remove ${file.name}`}>×</button>
+                                    </span>
+                                ))}
+                            </div>
+                        )}
 
                         <div className="input-row-bottom">
                             <ExecutionModeToggle

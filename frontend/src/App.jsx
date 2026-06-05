@@ -104,6 +104,10 @@ const buildAdvisorProgressMessage = (progress, existing = {}) => {
   };
 };
 
+const supportsAttachments = (settings = {}) => {
+  return settings.enabled_providers?.custom === true && settings.custom_endpoint_supports_attachments === true;
+};
+
 function App() {
   const [conversations, setConversations] = useState([]);
   const [currentConversationId, setCurrentConversationId] = useState(null);
@@ -127,6 +131,7 @@ function App() {
   const [autoConverge, setAutoConverge] = useState(true);
   const [convergenceThreshold, setConvergenceThreshold] = useState(2);
   const [dateFormat, setDateFormat] = useState('auto');
+  const [attachmentsEnabled, setAttachmentsEnabled] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [appMode, setAppMode] = useState(null); // null shows landing page
   const abortControllerRef = useRef(null);
@@ -182,6 +187,7 @@ function App() {
       // Load execution mode preference
       setExecutionMode(settings.execution_mode || DEFAULT_EXECUTION_MODE);
       setSearchProvider(settings.search_provider || 'duckduckgo');
+      setAttachmentsEnabled(supportsAttachments(settings));
 
       setCritiqueMode(settings.critique_mode || 'freeform');
       setDebateRounds(settings.debate_rounds || 1);
@@ -255,6 +261,7 @@ function App() {
       setSearchProvider(settings.search_provider || 'duckduckgo');
       setAvailableSearchProviders(buildAvailableSearchProviders(settings));
       setExecutionMode(settings.execution_mode || DEFAULT_EXECUTION_MODE);
+      setAttachmentsEnabled(supportsAttachments(settings));
 
       setCritiqueMode(settings.critique_mode || 'freeform');
       setDebateRounds(settings.debate_rounds || 1);
@@ -839,7 +846,7 @@ function App() {
     }
   };
 
-  const handleSendMessage = async (content, searchProvider) => {
+  const handleSendMessage = async (content, searchProvider, attachments = []) => {
     if (!currentConversationId) return;
 
     let effectiveMode = executionMode;
@@ -882,7 +889,11 @@ function App() {
       }
 
       // Optimistically add user message to UI
-      const userMessage = { role: 'user', content };
+      const userMessage = {
+        role: 'user',
+        content,
+        attachments: attachments.map(({ name, content_type }) => ({ name, content_type }))
+      };
       setCurrentConversation((prev) => ({
         ...prev,
         id: activeConversationId, // transition draft ID to actual database UUID
@@ -934,6 +945,7 @@ function App() {
         executionMode: effectiveMode,
         councilModels,
         chairmanModel: effectiveMode === 'full' ? chairmanModel : undefined,
+        attachments,
       };
       if (isDebate) {
         streamOptions.debateRounds = debateRounds;
@@ -1585,6 +1597,7 @@ function App() {
                 onSendMessage={handleSendMessage}
                 onAbort={handleAbort}
                 isLoading={isLoading}
+                attachmentsEnabled={attachmentsEnabled}
                 councilConfigured={councilConfigured}
                 councilModels={councilModels}
                 chairmanModel={chairmanModel}

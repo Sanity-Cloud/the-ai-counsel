@@ -49,6 +49,14 @@ def _is_rate_limited(status_code: int, response_text: str) -> bool:
         m in body for m in ("notion rate limit", "rate_limit", "too many requests", "throttl", "quota")
     ):
         return True
+    # Pure text match when there is no status code at all (e.g. raw exception text fallback)
+    if status_code == 0 and any(
+        m in body for m in (
+            "notion rate limit", "rate limit", "rate_limit",
+            "429", "too many requests", "quota", "throttl",
+        )
+    ):
+        return True
     return False
 
 
@@ -112,26 +120,130 @@ class CustomOpenAIProvider(LLMProvider):
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
 
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                payload = add_temperature_if_supported(
-                    {
-                        "model": model,
-                        "messages": messages,
-                    },
-                    model,
-                    "custom",
-                    temperature,
-                )
-                response = await client.post(
-                    f"{base_url}/chat/completions",
-                    headers=headers,
-                    json=payload
-                )
+            payload = add_temperature_if_supported(
+                {
+                    "model": model,
+                    "messages": messages,
+                },
+                model,
+                "custom",
+                temperature,
+            )
 
-                if response.status_code != 200:
+            start_time = time.monotonic()
+            attempts_info = []
+            rate_limit_retries, rate_limit_base, rate_limit_jitter = self._rate_limit_retry_config()
+            max_attempts = 1 + rate_limit_retries
+
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = None
+                last_status = 0
+                last_response_text = ""
+
+                for attempt in range(max_attempts):
+                    attempt_start = time.monotonic()
+                    attempt_idx = attempt + 1
+                    status_code = 0
+                    response_text = ""
+                    try:
+                        response = await client.post(
+                            f"{base_url}/chat/completions",
+                            headers=headers,
+                            json=payload
+                        )
+                        status_code = response.status_code
+                        response_text = response.text
+
+                        # Fast-path: auth errors don't benefit from retrying
+                        if _is_auth_error(status_code):
+                            attempt_duration = time.monotonic() - attempt_start
+                            attempts_info.append({
+                                "attempt": attempt_idx,
+                                "duration": f"{attempt_duration:.2f}s",
+                                "status": status_code,
+                                "is_rate_limit": False,
+                                "error_excerpt": response_text[:120] or "No response body",
+                            })
+                            last_status = status_code
+                            last_response_text = response_text
+                            break
+
+                    except Exception as e:
+                        response_text = str(e)
+
+                    attempt_duration = time.monotonic() - attempt_start
+                    is_rl = _is_rate_limited(status_code, response_text)
+
+                    attempts_info.append({
+                        "attempt": attempt_idx,
+                        "start_offset": f"{(time.monotonic() - start_time - attempt_duration):.2f}s",
+                        "duration": f"{attempt_duration:.2f}s",
+                        "status": status_code,
+                        "is_rate_limit": is_rl,
+                        "error_excerpt": response_text[:120] if response_text else "No response body",
+                    })
+
+                    last_status = status_code
+                    last_response_text = response_text
+
+                    if status_code == 200:
+                        break
+
+                    # Only retry on rate-limit responses
+                    if not is_rl:
+                        break
+
+                    if attempt >= max_attempts - 1:
+                        logger.warning(
+                            "custom_openai: rate-limited on %s after %d attempt(s) "
+                            "(%.1fs elapsed) -- rate-limit persists",
+                            model_id,
+                            attempt_idx,
+                            time.monotonic() - start_time,
+                        )
+                        break
+
+                    sleep_time = rate_limit_base * (2 ** attempt) + random.uniform(0, rate_limit_jitter)
+                    logger.warning(
+                        "custom_openai: rate-limited on %s (attempt %d/%d, HTTP %s) "
+                        "-- retrying in %.2fs",
+                        model_id,
+                        attempt_idx,
+                        max_attempts,
+                        status_code or "no-response",
+                        sleep_time,
+                    )
+                    await asyncio.sleep(sleep_time)
+
+                # Evaluate final outcome
+                if response is None or last_status != 200:
+                    status_str = f"status: {last_status}" if last_status else "no response"
+                    if _is_auth_error(last_status):
+                        err_msg = (
+                            f"{name} API error ({status_str}) after {len(attempts_info)} attempt(s): "
+                            "authentication failed -- check the API key."
+                        )
+                    elif _is_not_found(last_status):
+                        err_msg = (
+                            f"{name} API error ({status_str}) after {len(attempts_info)} attempt(s): "
+                            "model not found or endpoint does not exist."
+                        )
+                    elif _is_rate_limited(last_status, last_response_text):
+                        err_msg = (
+                            f"{name} API error ({status_str}) after {len(attempts_info)} attempt(s) "
+                            "due to Rate Limit."
+                        )
+                    else:
+                        err_msg = (
+                            f"{name} API error ({status_str}) after {len(attempts_info)} attempt(s)."
+                        )
+
                     return {
                         "error": True,
-                        "error_message": f"{name} API error: {response.status_code} - {response.text}"
+                        "error_message": err_msg,
+                        "rate_limited": _is_rate_limited(last_status, last_response_text),
+                        "debug_timeline": attempts_info,
+                        "total_elapsed_seconds": f"{time.monotonic() - start_time:.2f}s",
                     }
 
                 data = response.json()

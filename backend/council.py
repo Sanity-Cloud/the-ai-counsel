@@ -57,10 +57,13 @@ def get_provider_for_model(model_id: str) -> Any:
     return PROVIDERS["openrouter"]
 
 
-async def query_model(model: str, messages: List[Dict[str, str]], timeout: float = 120.0, temperature: float = 0.7) -> Dict[str, Any]:
+async def query_model(model: str, messages: List[Dict[str, str]], timeout: float = 120.0, temperature: float = 0.7, attachments: "List[Dict[str, Any]] | None" = None) -> Dict[str, Any]:
     """Dispatch query to appropriate provider."""
     provider = get_provider_for_model(model)
-    response = await provider.query(model, messages, timeout, temperature)
+    if attachments and model.startswith("custom:"):
+        response = await provider.query(model, messages, timeout, temperature, attachments=attachments)
+    else:
+        response = await provider.query(model, messages, timeout, temperature)
     if isinstance(response, dict):
         return await attach_cost(model, response)
     return response
@@ -136,7 +139,8 @@ async def stage1_collect_responses(
     models_override: "List[str] | None" = None,
     history: "List[Dict[str, str]] | None" = None,
     messages_override: "List[Dict[str, str]] | None" = None,
-    per_model_messages: "Dict[str, List[Dict[str, str]]] | None" = None
+    per_model_messages: "Dict[str, List[Dict[str, str]]] | None" = None,
+    attachments: "List[Dict[str, Any]] | None" = None,
 ) -> Any:
     """
     Stage 1: Collect individual responses from all council models.
@@ -195,7 +199,7 @@ async def stage1_collect_responses(
     async def _query_safe(m: str):
         try:
             model_msgs = per_model_messages.get(m, messages) if per_model_messages else messages
-            return m, await query_model(m, model_msgs, temperature=council_temp)
+            return m, await query_model(m, model_msgs, temperature=council_temp, attachments=attachments)
         except Exception as e:
             return m, {"error": True, "error_message": str(e)}
 
@@ -229,6 +233,9 @@ async def stage1_collect_responses(
                                 "response": None,
                                 "error": response.get('error'),
                                 "error_message": response.get('error_message', 'Unknown error'),
+                                "rate_limited": response.get('rate_limited', False),
+                                "debug_timeline": response.get('debug_timeline'),
+                                "total_elapsed_seconds": response.get('total_elapsed_seconds'),
                                 "usage": response.get('usage'),
                                 "cost": response.get('cost'),
                             }

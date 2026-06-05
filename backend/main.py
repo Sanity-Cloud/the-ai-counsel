@@ -346,6 +346,7 @@ class SendMessageRequest(BaseModel):
     council_models: Optional[List[str]] = None
     chairman_model: Optional[str] = None
     debate_rounds: Optional[int] = None
+    attachments: Optional[List[Dict[str, Any]]] = None
 
 
 class AskRequest(BaseModel):
@@ -354,6 +355,20 @@ class AskRequest(BaseModel):
     chairman_model: Optional[str] = None
     web_search: bool = False
     execution_mode: ExecutionMode = "chat_only"
+    attachments: Optional[List[Dict[str, Any]]] = None
+
+
+def _content_with_attachment_summary(content: str, attachments: Optional[List[Dict[str, Any]]] = None) -> str:
+    """Append a non-sensitive file list so persisted conversations show what was attached."""
+    files = []
+    for item in attachments or []:
+        if isinstance(item, dict):
+            name = str(item.get("name") or item.get("filename") or "attachment").strip() or "attachment"
+            content_type = str(item.get("content_type") or item.get("mime_type") or "").strip()
+            files.append(f"- {name}" + (f" ({content_type})" if content_type else ""))
+    if not files:
+        return content
+    return f"{content}\n\nAttached files:\n" + "\n".join(files)
 
 
 def _validate_execution_mode(mode: str) -> None:
@@ -459,6 +474,7 @@ async def _run_council_pipeline(
     request: Optional[Request] = None,
     history: Optional[List[Dict[str, str]]] = None,
     preflight: bool = True,
+    attachments: Optional[List[Dict[str, Any]]] = None,
 ) -> PipelineResult:
     """Shared orchestration for stage1 → stage2 → stage3 (non-streaming)."""
     result = PipelineResult()
@@ -469,12 +485,13 @@ async def _run_council_pipeline(
             execution_mode=execution_mode,
             council_models=models_override,
             chairman_model=chairman_override,
+            attachments=attachments,
         )
         preflight_error = await _run_model_preflight(_build_council_preflight_models(body))
         if preflight_error:
             raise HTTPException(status_code=400, detail=preflight_error)
 
-    async for item in stage1_collect_responses(content, search_context, request=request, models_override=models_override, history=history):
+    async for item in stage1_collect_responses(content, search_context, request=request, models_override=models_override, history=history, attachments=attachments):
         if isinstance(item, int):
             continue
         result.stage1.append(item)
@@ -646,7 +663,8 @@ async def send_message_stream(conversation_id: str, body: SendMessageRequest, re
         cost_report = None
         _register_run(conversation_id, body.execution_mode)
         try:
-            storage.add_user_message(conversation_id, body.content, conversation=conversation)
+            content_for_prompt = _content_with_attachment_summary(body.content, body.attachments)
+            storage.add_user_message(conversation_id, content_for_prompt, conversation=conversation)
 
             preflight_error = await _run_model_preflight(_build_council_preflight_models(body))
             if preflight_error:
@@ -704,7 +722,7 @@ async def send_message_stream(conversation_id: str, body: SendMessageRequest, re
 
             total_models = 0
 
-            async for item in stage1_collect_responses(body.content, search_context, request, models_override=body.council_models, history=history):
+            async for item in stage1_collect_responses(content_for_prompt, search_context, request, models_override=body.council_models, history=history, attachments=body.attachments):
                 if isinstance(item, int):
                     total_models = item
                     _active_runs[conversation_id]["progress"]["stage1"]["total"] = total_models
@@ -733,7 +751,7 @@ async def send_message_stream(conversation_id: str, body: SendMessageRequest, re
                 await asyncio.sleep(0.05)
 
                 # Iterate over the async generator
-                async for item in stage2_collect_rankings(body.content, stage1_results, search_context, request):
+                async for item in stage2_collect_rankings(content_for_prompt, stage1_results, search_context, request):
                     # First item is the label mapping
                     if isinstance(item, dict) and not item.get('model'):
                         label_to_model = item
@@ -764,7 +782,7 @@ async def send_message_stream(conversation_id: str, body: SendMessageRequest, re
                     print("Client disconnected before Stage 3")
                     raise asyncio.CancelledError("Client disconnected")
 
-                stage3_result = await stage3_synthesize_final(body.content, stage1_results, stage2_results, search_context, chairman_override=body.chairman_model)
+                stage3_result = await stage3_synthesize_final(content_for_prompt, stage1_results, stage2_results, search_context, chairman_override=body.chairman_model)
                 _active_runs[conversation_id]["stage3_response"] = stage3_result
                 yield f"data: {json.dumps({'type': 'stage3_complete', 'data': stage3_result})}\n\n"
 
@@ -877,7 +895,8 @@ async def send_debate_message_stream(conversation_id: str, body: SendMessageRequ
         debate_converged = False
         _register_run(conversation_id, body.execution_mode)
         try:
-            storage.add_user_message(conversation_id, body.content, conversation=conversation)
+            content_for_prompt = _content_with_attachment_summary(body.content, body.attachments)
+            storage.add_user_message(conversation_id, content_for_prompt, conversation=conversation)
 
             preflight_error = await _run_model_preflight(_build_council_preflight_models(body))
             if preflight_error:
@@ -930,11 +949,12 @@ async def send_debate_message_stream(conversation_id: str, body: SendMessageRequ
             effective_rounds = min(max(effective_rounds, 1), MAX_DEBATE_ROUNDS)
 
             async for event in run_iterative_debate(
-                body.content, search_context, request, body.execution_mode,
+                content_for_prompt, search_context, request, body.execution_mode,
                 models_override=body.council_models,
                 chairman_override=body.chairman_model,
                 history=history,
                 debate_rounds=effective_rounds,
+                attachments=body.attachments,
             ):
                 event_type = event.get("type")
                 yield f"data: {json.dumps(event)}\n\n"
@@ -1263,19 +1283,21 @@ async def send_message_sync(conversation_id: str, body: SendMessageRequest):
     if preflight_error:
         raise HTTPException(status_code=400, detail=preflight_error)
 
-    storage.add_user_message(conversation_id, body.content, conversation=conversation)
+    content_for_prompt = _content_with_attachment_summary(body.content, body.attachments)
+    storage.add_user_message(conversation_id, content_for_prompt, conversation=conversation)
 
     search_context = ""
     search_query = ""
     if body.web_search:
         settings = get_settings()
-        search_context, search_query, _ = await _fetch_search_context(body.content, settings)
+        search_context, search_query, _ = await _fetch_search_context(content_for_prompt, settings)
 
     result = await _run_council_pipeline(
-        body.content, body.execution_mode, search_context,
+        content_for_prompt, body.execution_mode, search_context,
         models_override=body.council_models, chairman_override=body.chairman_model,
         history=history,
         preflight=False,
+        attachments=body.attachments,
     )
 
     metadata = {"execution_mode": body.execution_mode, "cost_report": result.cost_report}
@@ -1316,11 +1338,13 @@ async def ask_oneshot(body: AskRequest):
     if not models:
         raise HTTPException(status_code=400, detail="At least one model is required")
 
+    content_for_prompt = _content_with_attachment_summary(body.content, body.attachments)
     preflight_body = SendMessageRequest(
         content=body.content,
         execution_mode=body.execution_mode,
         council_models=models,
         chairman_model=body.chairman_model,
+        attachments=body.attachments,
     )
     preflight_error = await _run_model_preflight(_build_council_preflight_models(preflight_body))
     if preflight_error:
@@ -1328,12 +1352,13 @@ async def ask_oneshot(body: AskRequest):
 
     search_context = ""
     if body.web_search:
-        search_context, _, _ = await _fetch_search_context(body.content, settings)
+        search_context, _, _ = await _fetch_search_context(content_for_prompt, settings)
 
     result = await _run_council_pipeline(
-        body.content, body.execution_mode, search_context,
+        content_for_prompt, body.execution_mode, search_context,
         models_override=models, chairman_override=body.chairman_model,
         preflight=False,
+        attachments=body.attachments,
     )
 
     if body.execution_mode == "chat_only" and len(result.stage1) == 1:

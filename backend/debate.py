@@ -366,6 +366,7 @@ async def run_iterative_debate(
     chairman_override: Optional[str] = None,
     history: Optional[List[Dict[str, str]]] = None,
     debate_rounds: Optional[int] = None,
+    attachments: Optional[List[Dict[str, Any]]] = None,
 ) -> AsyncGenerator[Dict[str, Any], None]:
     """
     Orchestrate multi-round debate. Yields SSE-ready event dicts.
@@ -524,6 +525,7 @@ async def run_iterative_debate(
             history=history if round_num == 1 else None,
             messages_override=messages_override,
             per_model_messages=per_model_messages,
+            attachments=attachments if round_num == 1 else None,
         ):
             if isinstance(item, int):
                 total_models = item

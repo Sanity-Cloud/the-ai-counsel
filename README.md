@@ -32,16 +32,17 @@ The AI Counsel is a **dual-mode multi-model AI deliberation system**. Instead of
 
 ## Installation
 
-```bash
-# Clone and install
-git clone https://github.com/jacob-bd/the-ai-counsel.git
-cd the-ai-counsel
-uv sync                        # Backend dependencies
-npm install --prefix frontend  # Frontend dependencies
+You can clone, install dependencies, and start the application in one shot:
 
-# Run (from project root)
+```bash
+git clone https://github.com/jacob-bd/the-ai-counsel.git && \
+cd the-ai-counsel && \
+uv sync && \
+npm install --prefix frontend && \
 ./start.sh
 ```
+
+*(Note: `uv sync` installs the backend dependencies, `npm install --prefix frontend` installs the frontend dependencies, and `./start.sh` spins up both servers together).*
 
 Then open **http://localhost:5173** and configure your API keys in Settings.
 

@@ -67,3 +67,60 @@ async def test_preflight_semaphore_does_not_change_behavior():
     assert mock_query.call_count == 10
 
 
+def test_is_transient_rate_limit_classification():
+    from backend.model_preflight import _is_transient_rate_limit
+
+    # Status code 429 is always rate limit
+    assert _is_transient_rate_limit(429, "Any message") is True
+    # Status code 503 is always rate limit / temporary congestion
+    assert _is_transient_rate_limit(503, "Service Unavailable") is True
+
+    # Standard substrings are rate limit
+    assert _is_transient_rate_limit(400, "rate limit exceeded") is True
+    assert _is_transient_rate_limit(500, "Too Many Requests") is True
+    assert _is_transient_rate_limit(0, "API quota exhausted") is True
+    assert _is_transient_rate_limit(0, "Throttled request") is True
+
+    # Genuine errors are not rate limits
+    assert _is_transient_rate_limit(401, "unauthorized access") is False
+    assert _is_transient_rate_limit(404, "model not found") is False
+    assert _is_transient_rate_limit(500, "internal server error") is False
+
+
+@pytest.mark.asyncio
+async def test_preflight_soft_fails_on_rate_limit():
+    with patch("backend.model_preflight.query_model", new_callable=AsyncMock) as mock_query:
+        mock_query.return_value = {
+            "error": True,
+            "error_message": "Rate limit exceeded (HTTP 429)",
+            "debug_timeline": [{"status": 429}]
+        }
+
+        # Mock sleep to avoid waiting during retries
+        with patch("backend.model_preflight.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            result = await preflight_models(["openai:gpt-4o"], timeout=1.0)
+
+    assert result.ok is True  # Allowed to proceed (soft-fail)
+    assert result.failures == []
+    assert result.rate_limited == ["openai:gpt-4o"]
+    assert mock_query.call_count == 3  # Initial + 2 retries
+
+
+@pytest.mark.asyncio
+async def test_preflight_hard_fails_on_genuine_error():
+    with patch("backend.model_preflight.query_model", new_callable=AsyncMock) as mock_query:
+        mock_query.return_value = {
+            "error": True,
+            "error_message": "Model not found (HTTP 404)",
+            "debug_timeline": [{"status": 404}]
+        }
+
+        result = await preflight_models(["openai:gpt-4o"], timeout=1.0)
+
+    assert result.ok is False  # Genuine error (hard-fail)
+    assert result.failures == [{"model": "openai:gpt-4o", "error": "Model not found (HTTP 404)"}]
+    assert result.rate_limited == []
+    assert mock_query.call_count == 1  # No retries for hard failures
+
+
+

@@ -587,11 +587,14 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
 
       // Auto-save if connection succeeds
       if (result.success) {
+        const nextEnabled = { ...enabledProviders, custom: true };
         await api.updateSettings({
           custom_endpoint_name: customEndpointName,
           custom_endpoint_url: customEndpointUrl,
-          custom_endpoint_api_key: customEndpointApiKey || null
+          custom_endpoint_api_key: customEndpointApiKey || null,
+          enabled_providers: nextEnabled
         });
+        setEnabledProviders(nextEnabled);
         // Reload settings to get the updated state
         const updatedSettings = await api.getSettings();
         setSettings(updatedSettings);
@@ -781,8 +784,13 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
 
       // Auto-save API key if validation succeeds and a new key was provided
       if (result.success && openrouterApiKey) {
-        await api.updateSettings({ openrouter_api_key: openrouterApiKey });
+        const nextEnabled = { ...enabledProviders, openrouter: true };
+        await api.updateSettings({
+          openrouter_api_key: openrouterApiKey,
+          enabled_providers: nextEnabled
+        });
         setOpenrouterApiKey(''); // Clear input after save
+        setEnabledProviders(nextEnabled);
 
         // Reload settings
         await loadSettings();
@@ -813,8 +821,13 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
 
       // Auto-save API key if validation succeeds and a new key was provided
       if (result.success && groqApiKey) {
-        await api.updateSettings({ groq_api_key: groqApiKey });
+        const nextEnabled = { ...enabledProviders, groq: true };
+        await api.updateSettings({
+          groq_api_key: groqApiKey,
+          enabled_providers: nextEnabled
+        });
         setGroqApiKey(''); // Clear input after save
+        setEnabledProviders(nextEnabled);
 
         // Reload settings
         await loadSettings();
@@ -843,7 +856,12 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
 
       if (result.success) {
         // Auto-save base URL if connection succeeds
-        await api.updateSettings({ ollama_base_url: ollamaBaseUrl });
+        const nextEnabled = { ...enabledProviders, ollama: true };
+        await api.updateSettings({
+          ollama_base_url: ollamaBaseUrl,
+          enabled_providers: nextEnabled
+        });
+        setEnabledProviders(nextEnabled);
 
         // Reload settings
         await loadSettings();
@@ -1035,8 +1053,16 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
       }
 
       if (result?.success && apiKey) {
-        await api.updateSettings({ opencode_api_key: apiKey });
+        const nextEnabled = { ...enabledProviders, direct: true };
+        const nextDirectToggles = { ...directProviderToggles, 'opencode-zen': true, 'opencode-go': true };
+        await api.updateSettings({
+          opencode_api_key: apiKey,
+          enabled_providers: nextEnabled,
+          direct_provider_toggles: nextDirectToggles
+        });
         setOpencodeApiKey('');
+        setEnabledProviders(nextEnabled);
+        setDirectProviderToggles(nextDirectToggles);
         await loadSettings();
         await loadOpencodeModels();
         setSuccess(true);
@@ -1087,8 +1113,16 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
 
       // Auto-save API key if validation succeeds AND it was a new key
       if (result.success && apiKey) {
-        await api.updateSettings({ [keyField]: apiKey });
+        const nextEnabled = { ...enabledProviders, direct: true };
+        const nextDirectToggles = { ...directProviderToggles, [providerId]: true };
+        await api.updateSettings({
+          [keyField]: apiKey,
+          enabled_providers: nextEnabled,
+          direct_provider_toggles: nextDirectToggles
+        });
         setDirectKeys(prev => ({ ...prev, [keyField]: '' })); // Clear input after save
+        setEnabledProviders(nextEnabled);
+        setDirectProviderToggles(nextDirectToggles);
 
         // Reload settings
         await loadSettings();

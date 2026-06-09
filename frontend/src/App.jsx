@@ -1636,7 +1636,13 @@ function App() {
         <AppErrorBoundary>
           <Suspense fallback={<AppLoadingFallback />}>
             {appMode === null && !currentConversationId ? (
-              <LandingPage onSelectMode={(m) => setAppMode(m)} />
+              <LandingPage onSelectMode={(m) => {
+                setAppMode(m);
+                if (m === 'council') {
+                  setCurrentConversationId('draft');
+                  setCurrentConversation({ id: 'draft', mode: 'council', title: 'New Conversation', messages: [] });
+                }
+              }} />
             ) : (
               <ChatInterface
                 conversation={currentConversation}

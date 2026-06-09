@@ -5,7 +5,7 @@
 // Dynamically determine API base URL based on current hostname
 // This allows the app to work on both localhost and network IPs
 const getApiBase = () => {
-  if (window.__AI_COUNSEL_CONFIG__?.apiUrl !== undefined) {
+  if (window.__AI_COUNSEL_CONFIG__?.apiUrl) {
     return window.__AI_COUNSEL_CONFIG__.apiUrl;
   }
   if (import.meta.env.VITE_API_URL) {

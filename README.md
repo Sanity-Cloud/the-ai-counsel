@@ -26,7 +26,13 @@ The AI Counsel is a **dual-mode multi-model AI deliberation system**. Instead of
 
 **Choosing the right mode:** use **Council** for direct answers, creative prompts, factual questions, and "give me the best response" synthesis. Use **Advisors** when the question has real tradeoffs, disagreement, risk, strategy, ethics, prioritization, or a decision to make. Simple prompts such as "give me one amazing animal fact" are usually Council prompts; advisor personas will naturally turn them into a debate over criteria.
 
-<!-- Demo videos coming soon -->
+### 📺 Video Overview
+
+<p align="center">
+  <a href="https://youtu.be/OQV92Y_4Wo4" target="_blank">
+    <img src="https://img.youtube.com/vi/OQV92Y_4Wo4/maxresdefault.jpg" alt="The AI Counsel Video Overview" width="75%">
+  </a>
+</p>
 
 ---
 

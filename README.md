@@ -16,8 +16,14 @@
 ---
 
 <p align="center">
+  <strong>📺 Video Overview & Demo</strong>
+  <br>
+  <em>Click below to watch the video demonstration of The AI Counsel:</em>
+</p>
+
+<p align="center">
   <a href="https://youtu.be/OQV92Y_4Wo4" target="_blank">
-    <img src="https://img.youtube.com/vi/OQV92Y_4Wo4/maxresdefault.jpg" alt="The AI Counsel Video Overview" width="75%">
+    <img src="https://img.youtube.com/vi/OQV92Y_4Wo4/maxresdefault.jpg" alt="The AI Counsel Video Overview & Demo" width="75%">
   </a>
 </p>
 

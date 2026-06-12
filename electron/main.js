@@ -180,6 +180,73 @@ function providerListenArgs(settings = {}) {
 }
 
 
+function readSettingsFile() {
+  try {
+    const settingsPath = path.join(ROOT_DIR, 'data', 'settings.json');
+    if (fs.existsSync(settingsPath)) {
+      return JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    }
+  } catch (e) {
+    log(`Failed to read settings.json: ${e.message}`);
+  }
+  return {};
+}
+
+function updateEnvFile(filePath, keyName, value) {
+  try {
+    const parentDir = path.dirname(filePath);
+    if (!fs.existsSync(parentDir)) {
+      fs.mkdirSync(parentDir, { recursive: true });
+    }
+    let content = '';
+    if (fs.existsSync(filePath)) {
+      content = fs.readFileSync(filePath, 'utf8');
+    }
+    const regex = new RegExp(`^\\s*${keyName}\\s*=.*$`, 'm');
+    if (regex.test(content)) {
+      content = content.replace(regex, `${keyName}=${value}`);
+    } else {
+      content = content.trim() + `\n${keyName}=${value}\n`;
+    }
+    fs.writeFileSync(filePath, content, 'utf8');
+    log(`Updated ${path.basename(filePath)} with ${keyName}`);
+  } catch (e) {
+    log(`Failed to update ${path.basename(filePath)}: ${e.message}`);
+  }
+}
+
+function resolveNotionApiKey(settings = {}) {
+  if (process.env.NOTION2API_API_KEY) {
+    return process.env.NOTION2API_API_KEY;
+  }
+  if (settings && settings.notion2api_api_key) {
+    return settings.notion2api_api_key;
+  }
+  // Try reading from .env file to keep it stable
+  try {
+    const envPath = path.join(ROOT_DIR, '.env');
+    if (fs.existsSync(envPath)) {
+      const content = fs.readFileSync(envPath, 'utf8');
+      const match = content.match(/^\s*NOTION2API_API_KEY\s*=\s*(.+)$/m);
+      if (match && match[1].trim()) {
+        return match[1].trim();
+      }
+    }
+  } catch (e) {
+    log(`Failed to read API key from backend .env: ${e.message}`);
+  }
+  if (!global.sessionNotionApiKey) {
+    try {
+      const crypto = require('crypto');
+      global.sessionNotionApiKey = 'n2api_' + crypto.randomBytes(24).toString('hex');
+    } catch (e) {
+      log(`Failed to generate random API key: ${e.message}`);
+      global.sessionNotionApiKey = 'n2api_default_session_key';
+    }
+  }
+  return global.sessionNotionApiKey;
+}
+
 function startProvider(settings = {}) {
   if (providerProcess && providerProcess.pid && !providerProcess.killed) {
     return providerProcess;
@@ -189,13 +256,22 @@ function startProvider(settings = {}) {
     log('Notion2API auto-launch skipped: no checkout root found');
     return null;
   }
+  const notionApiKey = resolveNotionApiKey(settings);
+  if (notionApiKey) {
+    const providerEnvPath = path.join(root, '.env');
+    updateEnvFile(providerEnvPath, 'API_KEY', notionApiKey);
+  }
   const listen = providerListenArgs(settings);
+  const providerEnv = {
+    APP_MODE: 'standard',
+    HOST: listen.host,
+  };
+  if (notionApiKey) {
+    providerEnv.API_KEY = notionApiKey;
+  }
   providerProcess = spawnLogged('notion2api', providerPython(root), ['-m', 'uvicorn', 'app.server:app', '--host', listen.host, '--port', listen.port], {
     cwd: root,
-    env: {
-      APP_MODE: 'standard',
-      HOST: listen.host,
-    },
+    env: providerEnv,
   });
   return providerProcess;
 }
@@ -275,12 +351,25 @@ function waitForUrl(url, timeoutMs = 90000) {
 }
 
 function startStack() {
+  const settings = readSettingsFile();
+  const notionApiKey = resolveNotionApiKey(settings);
+  log(`Starting stack, resolved Notion2API API key: ${notionApiKey ? notionApiKey.substring(0, 10) + '...' : 'none'}`);
+
+  if (notionApiKey) {
+    const backendEnvPath = path.join(ROOT_DIR, '.env');
+    updateEnvFile(backendEnvPath, 'NOTION2API_API_KEY', notionApiKey);
+  }
+
   if (!backendProcess || backendProcess.killed) {
+    const backendEnv = {
+      LLM_COUNCIL_BIND_HOST: process.env.LLM_COUNCIL_BIND_HOST || '127.0.0.1',
+    };
+    if (notionApiKey) {
+      backendEnv.NOTION2API_API_KEY = notionApiKey;
+    }
     backendProcess = spawnLogged('backend', commandForUv(), ['run', 'python', '-m', 'backend.main'], {
       cwd: ROOT_DIR,
-      env: {
-        LLM_COUNCIL_BIND_HOST: process.env.LLM_COUNCIL_BIND_HOST || '127.0.0.1',
-      },
+      env: backendEnv,
     });
   }
 

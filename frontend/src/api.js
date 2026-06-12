@@ -296,6 +296,45 @@ export const api = {
   },
 
   /**
+   * Test dedicated Notion2API provider.
+   */
+  async testNotion2API(url, apiKey, root) {
+    const response = await fetch(`${API_BASE}/api/settings/test-notion2api`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ url, api_key: apiKey, root }),
+    });
+    if (!response.ok) {
+      throw new Error('Failed to test Notion2API');
+    }
+    return response.json();
+  },
+
+  /**
+   * Get dedicated Notion2API provider status.
+   */
+  async getNotion2APIStatus() {
+    const response = await fetch(`${API_BASE}/api/notion2api/status`);
+    if (!response.ok) {
+      throw new Error('Failed to get Notion2API status');
+    }
+    return response.json();
+  },
+
+  /**
+   * Get dedicated Notion2API models.
+   */
+  async getNotion2APIModels() {
+    const response = await fetch(`${API_BASE}/api/notion2api/models`);
+    if (!response.ok) {
+      throw new Error('Failed to get Notion2API models');
+    }
+    return response.json();
+  },
+
+  /**
    * Test custom OpenAI-compatible endpoint.
    */
   async testCustomEndpoint(name, url, apiKey) {

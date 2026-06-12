@@ -214,7 +214,8 @@ function App() {
         settings.anthropic_api_key_set ||
         settings.google_api_key_set ||
         settings.mistral_api_key_set ||
-        settings.deepseek_api_key_set;
+        settings.deepseek_api_key_set ||
+        settings.notion2api_api_key_set;
 
       // 2. Test Ollama Connection
       // We do this regardless to update the status indicator

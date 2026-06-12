@@ -10,6 +10,7 @@ import deepseekIcon from '../../assets/icons/deepseek.svg';
 import nvidiaIcon from '../../assets/icons/nvidia.svg';
 import customEndpointIcon from '../../assets/icons/openai-compatible.svg';
 import opencodeIcon from '../../assets/icons/opencode.svg';
+import notion2apiIcon from '../../assets/icons/notion2api.svg';
 
 const PROVIDER_ICONS = {
     openai: openaiIcon,
@@ -69,6 +70,21 @@ export default function ProviderSettings({
     isTestingOpencode,
     opencodeTestResult,
     opencodeAvailableModels,
+    // Notion2API
+    notion2apiBaseUrl,
+    setNotion2apiBaseUrl,
+    notion2apiRoot,
+    setNotion2apiRoot,
+    notion2apiToken,
+    setNotion2apiToken,
+    notion2apiAutoLaunch,
+    setNotion2apiAutoLaunch,
+    notion2apiStatus,
+    notion2apiModels,
+    handleTestNotion2api,
+    isTestingNotion2api,
+    notion2apiTestResult,
+    onRefreshNotion2api,
     // Custom Endpoint
     customEndpointName,
     setCustomEndpointName,
@@ -344,6 +360,85 @@ export default function ProviderSettings({
                         Get a key at <a href="https://opencode.ai/auth" target="_blank" rel="noopener noreferrer">opencode.ai/auth</a> —
                         add a Zen balance for pay-per-token, subscribe to Go for $5/$10 monthly, or both.
                     </p>
+                </form>
+            </div>
+
+            {/* Notion2API */}
+            <div className="subsection" style={{ marginTop: '24px' }}>
+                <h4>
+                    <img src={notion2apiIcon} alt="" className="provider-icon" style={{ verticalAlign: 'middle', marginRight: '6px' }} />
+                    Notion2API Provider
+                </h4>
+                <p className="subsection-description" style={{ fontSize: '13px', color: '#94a3b8', marginBottom: '16px' }}>
+                    Dedicated provider for a local or remote Notion2API OpenAI-compatible service. Models appear as <code>notion2api:*</code>.
+                </p>
+                <form className="api-key-section" onSubmit={e => e.preventDefault()}>
+                    <label>Base URL</label>
+                    <div className="api-key-input-row">
+                        <input
+                            type="text"
+                            placeholder="http://127.0.0.1:8120/v1"
+                            value={notion2apiBaseUrl}
+                            onChange={e => setNotion2apiBaseUrl(e.target.value)}
+                        />
+                    </div>
+                    <label style={{ marginTop: '12px' }}>Local checkout root <span style={{ fontWeight: 'normal', opacity: 0.7 }}>(optional)</span></label>
+                    <div className="api-key-input-row">
+                        <input
+                            type="text"
+                            placeholder="X:\\Code\\notion2api"
+                            value={notion2apiRoot}
+                            onChange={e => setNotion2apiRoot(e.target.value)}
+                        />
+                    </div>
+                    <label style={{ marginTop: '12px' }}>API Key</label>
+                    <div className="api-key-input-row">
+                        <input
+                            type="password"
+                            placeholder={settings?.notion2api_api_key_set ? 'Configured key' : 'Enter API key'}
+                            value={notion2apiToken}
+                            onChange={e => setNotion2apiToken(e.target.value)}
+                            className={settings?.notion2api_api_key_set && !notion2apiToken ? 'key-configured' : ''}
+                        />
+                        <button
+                            className="test-button"
+                            onClick={handleTestNotion2api}
+                            disabled={!notion2apiBaseUrl || isTestingNotion2api}
+                        >
+                            {isTestingNotion2api ? 'Testing...' : 'Test / Save'}
+                        </button>
+                    </div>
+                    <label className="checkbox-label" style={{ marginTop: '12px' }}>
+                        <input
+                            type="checkbox"
+                            checked={!!notion2apiAutoLaunch}
+                            onChange={e => setNotion2apiAutoLaunch(e.target.checked)}
+                        />
+                        Auto-launch this provider when desktop launcher support is enabled
+                    </label>
+                    <div className="model-options-row" style={{ marginTop: '12px' }}>
+                        <button type="button" className="reset-defaults-button" onClick={onRefreshNotion2api}>
+                            Refresh Status / Models
+                        </button>
+                    </div>
+                    {notion2apiStatus && (
+                        <div className={`key-status ${notion2apiStatus.running ? 'set' : ''}`}>
+                            {notion2apiStatus.running ? '✓ Running' : 'Not running'}
+                            {notion2apiStatus.api_key_set ? ' · API key configured' : ' · No API key saved'}
+                            {notion2apiStatus.model_count > 0 && ` · ${notion2apiStatus.model_count} models available`}
+                            {notion2apiStatus.error && ` · ${notion2apiStatus.error}`}
+                        </div>
+                    )}
+                    {notion2apiModels.length > 0 && (
+                        <div className="key-status set">
+                            ✓ Dedicated provider models loaded · {notion2apiModels.length} available
+                        </div>
+                    )}
+                    {notion2apiTestResult && (
+                        <div className={`test-result ${notion2apiTestResult.success ? 'success' : 'error'}`}>
+                            {notion2apiTestResult.message}
+                        </div>
+                    )}
                 </form>
             </div>
 

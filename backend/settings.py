@@ -140,6 +140,12 @@ class Settings(BaseModel):
     custom_endpoint_url: Optional[str] = None
     custom_endpoint_api_key: Optional[str] = None
 
+    # Notion2API provider
+    notion2api_base_url: str = "http://127.0.0.1:8120/v1"
+    notion2api_api_key: Optional[str] = None
+    notion2api_root: Optional[str] = None
+    notion2api_auto_launch: bool = False
+
     # Enabled Providers (which sources are available for council selection)
     enabled_providers: Dict[str, bool] = DEFAULT_ENABLED_PROVIDERS.copy()
 

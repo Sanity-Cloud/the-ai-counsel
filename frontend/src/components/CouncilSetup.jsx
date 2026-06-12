@@ -17,6 +17,7 @@ const DIRECT_PROVIDER_KEY_FLAGS = {
   nvidia: 'nvidia_api_key_set',
   'opencode-zen': 'opencode_api_key_set',
   'opencode-go': 'opencode_api_key_set',
+  notion2api: 'notion2api_api_key_set',
   // Backend returns capitalized labels with a space; allow both forms.
   'opencode zen': 'opencode_api_key_set',
   'opencode go': 'opencode_api_key_set',
@@ -28,6 +29,9 @@ function filterDirectModels(directModels, settings) {
   return directModels.filter((model) => {
     if (model.provider === 'Groq') {
       return settings.groq_api_key_set && (ep.groq !== false);
+    }
+    if (model.provider === 'Notion2API' || model.source === 'notion2api' || String(model.id || '').startsWith('notion2api:')) {
+      return settings.notion2api_api_key_set && (ep.notion2api !== false);
     }
     if (!ep.direct) return false;
     const providerKey = (model.provider || '').toLowerCase().replace(/\s+/g, '-');
@@ -48,6 +52,7 @@ function getConfiguredModelSources(settings) {
     || settings.groq_api_key_set
     || settings.nvidia_api_key_set
     || settings.opencode_api_key_set
+    || settings.notion2api_api_key_set
   );
   return {
     openrouter: !!settings.openrouter_api_key_set && (ep.openrouter !== false),

@@ -22,6 +22,7 @@ let mainWindow;
 let tray;
 let backendProcess;
 let frontendProcess;
+let providerProcess;
 let isQuitting = false;
 
 function ensureLogDir() {
@@ -85,6 +86,159 @@ function spawnLogged(name, command, args, options = {}) {
   child.on('error', error => log(`${name} failed to start: ${error.stack || error.message}`));
   child.on('exit', (code, signal) => log(`${name} exited with code=${code} signal=${signal}`));
   return child;
+}
+
+
+function getJson(url, timeoutMs = 5000) {
+  return new Promise((resolve, reject) => {
+    const req = http.get(url, res => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', chunk => { body += chunk; });
+      res.on('end', () => {
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          reject(new Error(`HTTP ${res.statusCode} for ${url}`));
+          return;
+        }
+        try {
+          resolve(JSON.parse(body || '{}'));
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(timeoutMs, () => {
+      req.destroy();
+      reject(new Error(`Timed out waiting for ${url}`));
+    });
+  });
+}
+
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function managedStatusUrl() {
+  return BACKEND_URL + '/api/' + 'notion2api' + '/status';
+}
+
+async function getManagedStatus() {
+  try {
+    return await getJson(managedStatusUrl(), 5000);
+  } catch (error) {
+    log('managed provider status check failed: ' + error.message);
+    return { running: false, error: error.message };
+  }
+}
+
+
+function providerBaseUrl(settings = {}) {
+  return (settings.notion2api_base_url || 'http://127.0.0.1:8120/v1').replace(/\/$/, '');
+}
+
+function providerRootCandidates(settings = {}) {
+  const roots = [
+    settings.notion2api_root,
+    path.join(ROOT_DIR, 'vendor', 'notion2api'),
+    path.join(path.dirname(ROOT_DIR), 'notion2api'),
+  ];
+  if (process.platform === 'win32') {
+    roots.push('X:\\Code\\notion2api');
+  }
+  return roots.filter(Boolean);
+}
+
+function resolveProviderRoot(settings = {}) {
+
+  for (const root of providerRootCandidates(settings)) {
+    const markerPath = path.join(root, 'app', 'server' + '.py');
+    if (fs.existsSync(markerPath)) {
+      return root;
+    }
+  }
+  return null;
+}
+
+
+function providerPython(root) {
+  const venvPython = process.platform === 'win32'
+    ? path.join(root, '.venv', 'Scripts', 'python.exe')
+    : path.join(root, '.venv', 'bin', 'python');
+  return fs.existsSync(venvPython) ? venvPython : 'python';
+}
+
+function providerListenArgs(settings = {}) {
+  const parsed = new URL(providerBaseUrl(settings));
+  return {
+    host: parsed.hostname || '127.0.0.1',
+    port: String(parsed.port || (parsed.protocol === 'https:' ? 443 : 80)),
+  };
+}
+
+
+function startProvider(settings = {}) {
+  if (providerProcess && providerProcess.pid && !providerProcess.killed) {
+    return providerProcess;
+  }
+  const root = resolveProviderRoot(settings);
+  if (!root) {
+    log('Notion2API auto-launch skipped: no checkout root found');
+    return null;
+  }
+  const listen = providerListenArgs(settings);
+  providerProcess = spawnLogged('notion2api', providerPython(root), ['-m', 'uvicorn', 'app.server:app', '--host', listen.host, '--port', listen.port], {
+    cwd: root,
+    env: {
+      APP_MODE: 'standard',
+      HOST: listen.host,
+    },
+  });
+  return providerProcess;
+}
+
+
+function stopProvider() {
+  stopProcess(providerProcess, 'notion2api');
+  providerProcess = null;
+}
+
+async function waitForManagedStatus(timeoutMs = 45000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const status = await getManagedStatus();
+    if (status.running) return status;
+    await delay(750);
+  }
+  throw new Error('Timed out waiting for Notion2API status');
+}
+
+async function startProviderFromMenu() {
+  const settings = await getJson(`${BACKEND_URL}/api/settings`, 5000);
+  startProvider(settings);
+}
+
+
+async function ensureProviderAutoLaunch() {
+  let settings;
+  try {
+    settings = await getJson(`${BACKEND_URL}/api/settings`, 5000);
+  } catch (error) {
+    log(`Could not read Notion2API settings: ${error.message}`);
+    return;
+  }
+  if (!settings.notion2api_auto_launch) {
+    log('Notion2API auto-launch disabled');
+    return;
+  }
+  const status = await getManagedStatus();
+  if (status.running) {
+    log(`Notion2API already running (${status.model_count || 0} models)`);
+    return;
+  }
+  startProvider(settings);
+  await waitForManagedStatus(45000);
 }
 
 function waitForUrl(url, timeoutMs = 90000) {
@@ -155,6 +309,7 @@ function stopProcess(child, name) {
 function stopStack() {
   stopProcess(frontendProcess, 'frontend');
   stopProcess(backendProcess, 'backend');
+  stopProvider();
 }
 
 function createWindow() {
@@ -218,9 +373,12 @@ function menuTemplate() {
         { type: 'separator' },
         { label: 'Open in Browser', click: () => shell.openExternal(FRONTEND_URL) },
         { label: 'Open Backend Health', click: () => shell.openExternal(HEALTH_URL) },
+        { label: 'Open Notion2API Status', click: () => shell.openExternal(BACKEND_URL + '/api/' + 'notion2api' + '/status') },
         { label: 'Open Logs', click: openLogs },
         { type: 'separator' },
         { label: 'Start Stack', click: startStack },
+        { label: 'Start Notion2API', click: () => startProviderFromMenu().catch(error => log('Start Notion2API failed: ' + error.message)) },
+        { label: 'Stop Notion2API', click: stopProvider },
         { label: 'Stop Stack', click: stopStack },
         { type: 'separator' },
         { label: `About ${APP_NAME}`, click: showAbout },
@@ -258,6 +416,7 @@ async function startDesktopApp() {
   try {
     startStack();
     await waitForUrl(HEALTH_URL, 90000);
+    await ensureProviderAutoLaunch();
     await waitForUrl(FRONTEND_URL, 90000);
     await mainWindow.loadURL(FRONTEND_URL);
   } catch (error) {

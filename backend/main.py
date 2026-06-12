@@ -12,7 +12,6 @@ import secrets
 import uuid
 import json
 import asyncio
-
 from . import storage
 from .council import generate_conversation_title, generate_search_query, stage1_collect_responses, stage2_collect_rankings, stage3_synthesize_final, calculate_aggregate_rankings, PROVIDERS
 from .config import get_chairman_model, get_council_models
@@ -1384,6 +1383,12 @@ class UpdateSettingsRequest(BaseModel):
     custom_endpoint_url: Optional[str] = None
     custom_endpoint_api_key: Optional[str] = None
 
+    # Notion2API provider
+    notion2api_base_url: Optional[str] = None
+    notion2api_api_key: Optional[str] = None
+    notion2api_root: Optional[str] = None
+    notion2api_auto_launch: Optional[bool] = None
+
     # API Keys
     serper_api_key: Optional[str] = None
     tavily_api_key: Optional[str] = None
@@ -1458,6 +1463,13 @@ class TestTavilyRequest(BaseModel):
     api_key: str | None = None
 
 
+class TestNotion2APIRequest(BaseModel):
+    """Request to test a Notion2API endpoint."""
+    url: Optional[str] = None
+    api_key: Optional[str] = None
+    root: Optional[str] = None
+
+
 @app.get("/api/settings")
 async def get_app_settings():
     """Get current application settings."""
@@ -1475,6 +1487,11 @@ async def get_app_settings():
         "custom_endpoint_url": settings.custom_endpoint_url,
         # Don't send the API key to frontend for security
 
+        # Notion2API provider
+        "notion2api_base_url": settings.notion2api_base_url,
+        "notion2api_root": settings.notion2api_root,
+        "notion2api_auto_launch": settings.notion2api_auto_launch,
+
         # API Key Status
         "serper_api_key_set": bool(settings.serper_api_key),
         "tavily_api_key_set": bool(settings.tavily_api_key),
@@ -1490,6 +1507,7 @@ async def get_app_settings():
         "nvidia_api_key_set": bool(settings.nvidia_api_key),
         "opencode_api_key_set": bool(settings.opencode_api_key),
         "custom_endpoint_api_key_set": bool(settings.custom_endpoint_api_key),
+        "notion2api_api_key_set": bool(settings.notion2api_api_key or os.getenv("NOTION2API_API_KEY")),
 
         # Enabled Providers
         "enabled_providers": settings.enabled_providers,
@@ -1636,6 +1654,21 @@ async def update_app_settings(request: UpdateSettingsRequest):
         updates["custom_endpoint_url"] = request.custom_endpoint_url
     if request.custom_endpoint_api_key is not None:
         updates["custom_endpoint_api_key"] = request.custom_endpoint_api_key
+
+    # Notion2API provider
+    if request.notion2api_base_url is not None:
+        updates["notion2api_base_url"] = request.notion2api_base_url
+        os.environ["NOTION2API_BASE_URL"] = request.notion2api_base_url
+    if request.notion2api_api_key is not None:
+        updates["notion2api_api_key"] = request.notion2api_api_key
+        if request.notion2api_api_key:
+            os.environ["NOTION2API_API_KEY"] = request.notion2api_api_key
+        else:
+            os.environ.pop("NOTION2API_API_KEY", None)
+    if request.notion2api_root is not None:
+        updates["notion2api_root"] = request.notion2api_root
+    if request.notion2api_auto_launch is not None:
+        updates["notion2api_auto_launch"] = request.notion2api_auto_launch
 
     if request.full_content_results is not None:
         # Validate range
@@ -1814,6 +1847,11 @@ async def update_app_settings(request: UpdateSettingsRequest):
         "custom_endpoint_name": settings.custom_endpoint_name,
         "custom_endpoint_url": settings.custom_endpoint_url,
 
+        # Notion2API provider
+        "notion2api_base_url": settings.notion2api_base_url,
+        "notion2api_root": settings.notion2api_root,
+        "notion2api_auto_launch": settings.notion2api_auto_launch,
+
         # API Key Status
         "serper_api_key_set": bool(settings.serper_api_key),
         "tavily_api_key_set": bool(settings.tavily_api_key),
@@ -1829,6 +1867,7 @@ async def update_app_settings(request: UpdateSettingsRequest):
         "nvidia_api_key_set": bool(settings.nvidia_api_key),
         "opencode_api_key_set": bool(settings.opencode_api_key),
         "custom_endpoint_api_key_set": bool(settings.custom_endpoint_api_key),
+        "notion2api_api_key_set": bool(settings.notion2api_api_key or os.getenv("NOTION2API_API_KEY")),
 
         # Enabled Providers
         "enabled_providers": settings.enabled_providers,
@@ -2202,6 +2241,49 @@ async def get_custom_endpoint_models():
     provider = CustomOpenAIProvider()
     models = await provider.get_models()
     return {"models": models}
+
+
+@app.post("/api/settings/test-notion2api")
+async def test_notion2api_connection(request: TestNotion2APIRequest):
+    """Test a dedicated Notion2API provider connection."""
+    from .providers.notion2api import Notion2APIProvider
+
+    settings = get_settings()
+    url = request.url or settings.notion2api_base_url
+    token = request.api_key if request.api_key is not None else (settings.notion2api_api_key or os.getenv("NOTION2API_API_KEY") or "")
+    return await Notion2APIProvider().validate_connection(url, token)
+
+
+@app.get("/api/notion2api/models")
+async def get_notion2api_models():
+    """Fetch models from the dedicated Notion2API provider."""
+    provider = PROVIDERS.get("notion2api")
+    if not provider:
+        return {"models": [], "error": "Notion2API provider is not registered"}
+    models = await provider.get_models()
+    return {"models": models}
+
+
+@app.get("/api/notion2api/status")
+async def get_notion2api_status():
+    """Return Notion2API status without exposing credentials."""
+    import httpx
+
+    settings = get_settings()
+    base_url = (settings.notion2api_base_url or os.getenv("NOTION2API_BASE_URL") or "http://127.0.0.1:8120/v1").rstrip("/")
+    token = settings.notion2api_api_key or os.getenv("NOTION2API_API_KEY") or ""
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{base_url}/models", headers=headers)
+        if response.status_code != 200:
+            return {"base_url": base_url, "root": settings.notion2api_root, "api_key_set": bool(token), "auto_launch": settings.notion2api_auto_launch, "running": False, "model_count": 0, "error": f"HTTP {response.status_code}"}
+        model_count = len(response.json().get("data", []))
+        managed_running = bool(_managed_provider_process and _managed_provider_process.poll() is None)
+        return {"base_url": base_url, "root": settings.notion2api_root, "api_key_set": bool(token), "auto_launch": settings.notion2api_auto_launch, "running": True, "managed_running": managed_running, "model_count": model_count, "error": None}
+    except Exception as exc:
+        managed_running = bool(_managed_provider_process and _managed_provider_process.poll() is None)
+        return {"base_url": base_url, "root": settings.notion2api_root, "api_key_set": bool(token), "auto_launch": settings.notion2api_auto_launch, "running": False, "managed_running": managed_running, "model_count": 0, "error": str(exc)}
 
 
 @app.get("/api/models")

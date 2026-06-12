@@ -99,6 +99,16 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
   const [isTestingCustomEndpoint, setIsTestingCustomEndpoint] = useState(false);
   const [customEndpointTestResult, setCustomEndpointTestResult] = useState(null);
 
+  // Notion2API Provider State
+  const [notion2apiBaseUrl, setNotion2apiBaseUrl] = useState('');
+  const [notion2apiRoot, setNotion2apiRoot] = useState('');
+  const [notion2apiToken, setNotion2apiToken] = useState('');
+  const [notion2apiAutoLaunch, setNotion2apiAutoLaunch] = useState(false);
+  const [notion2apiStatus, setNotion2apiStatus] = useState(null);
+  const [notion2apiModels, setNotion2apiModels] = useState([]);
+  const [isTestingNotion2api, setIsTestingNotion2api] = useState(false);
+  const [notion2apiTestResult, setNotion2apiTestResult] = useState(null);
+
   // Direct Provider State
   const [directKeys, setDirectKeys] = useState({
     openai_api_key: '',
@@ -215,6 +225,9 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
       responseLanguage !== (settings.response_language || RESPONSE_LANGUAGE_DEFAULT) ||
       JSON.stringify(enabledProviders) !== JSON.stringify(settings.enabled_providers) ||
       JSON.stringify(directProviderToggles) !== JSON.stringify(settings.direct_provider_toggles) ||
+      notion2apiBaseUrl !== (settings.notion2api_base_url || '') ||
+      notion2apiRoot !== (settings.notion2api_root || '') ||
+      notion2apiAutoLaunch !== (settings.notion2api_auto_launch ?? false) ||
       JSON.stringify(councilModels) !== JSON.stringify(settings.council_models) ||
       chairmanModel !== (settings.chairman_model || '') ||
       councilTemperature !== (settings.council_temperature ?? 0.5) ||
@@ -258,6 +271,9 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
           response_language: responseLanguage,
           enabled_providers: enabledProviders,
           direct_provider_toggles: directProviderToggles,
+          notion2api_base_url: notion2apiBaseUrl,
+          notion2api_root: notion2apiRoot,
+          notion2api_auto_launch: notion2apiAutoLaunch,
           council_models: councilModels,
           chairman_model: chairmanModel,
           council_temperature: councilTemperature,
@@ -489,6 +505,14 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
       if (data.custom_endpoint_url) setCustomEndpointUrl(data.custom_endpoint_url);
       // API key is not sent to frontend for security, similar to other keys
 
+      // Notion2API Settings
+      setNotion2apiBaseUrl(data.notion2api_base_url || 'http://127.0.0.1:8120/v1');
+      setNotion2apiRoot(data.notion2api_root || '');
+      setNotion2apiAutoLaunch(data.notion2api_auto_launch ?? false);
+      setNotion2apiToken('');
+      await loadNotion2apiStatus();
+      await loadNotion2apiModels();
+
       // Prompts
       setPrompts(normalizedPrompts);
 
@@ -574,6 +598,57 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
       }
     } catch (err) {
       console.warn('Failed to load custom endpoint models:', err);
+    }
+  };
+
+  const loadNotion2apiStatus = async () => {
+    try {
+      const data = await api.getNotion2APIStatus();
+      setNotion2apiStatus(data);
+    } catch (err) {
+      console.warn('Failed to load Notion2API status:', err);
+      setNotion2apiStatus({ running: false, error: err.message });
+    }
+  };
+
+  const loadNotion2apiModels = async () => {
+    try {
+      const data = await api.getNotion2APIModels();
+      const sorted = (data.models || []).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+      setNotion2apiModels(sorted);
+    } catch (err) {
+      console.warn('Failed to load Notion2API models:', err);
+      setNotion2apiModels([]);
+    }
+  };
+
+  const handleTestNotion2api = async () => {
+    setIsTestingNotion2api(true);
+    setNotion2apiTestResult(null);
+    try {
+      const result = await api.testNotion2API(notion2apiBaseUrl, notion2apiToken || null, notion2apiRoot || null);
+      setNotion2apiTestResult(result);
+      if (result.success) {
+        const nextEnabled = { ...enabledProviders, notion2api: true, custom: false };
+        const updates = {
+          notion2api_base_url: notion2apiBaseUrl,
+          notion2api_root: notion2apiRoot,
+          notion2api_auto_launch: notion2apiAutoLaunch,
+          enabled_providers: nextEnabled,
+        };
+        if (notion2apiToken) updates.notion2api_api_key = notion2apiToken;
+        await api.updateSettings(updates);
+        setEnabledProviders(nextEnabled);
+        setNotion2apiToken('');
+        await loadSettings();
+        await loadNotion2apiModels();
+        setSuccess(true);
+        setTimeout(() => setSuccess(false), 3000);
+      }
+    } catch (err) {
+      setNotion2apiTestResult({ success: false, message: err.message });
+    } finally {
+      setIsTestingNotion2api(false);
     }
   };
 
@@ -1507,6 +1582,21 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
                 isTestingOpencode={isTestingOpencode}
                 opencodeTestResult={opencodeTestResult}
                 opencodeAvailableModels={opencodeAvailableModels}
+                // Notion2API
+                notion2apiBaseUrl={notion2apiBaseUrl}
+                setNotion2apiBaseUrl={(val) => { setNotion2apiBaseUrl(val); setNotion2apiTestResult(null); }}
+                notion2apiRoot={notion2apiRoot}
+                setNotion2apiRoot={(val) => { setNotion2apiRoot(val); setNotion2apiTestResult(null); }}
+                notion2apiToken={notion2apiToken}
+                setNotion2apiToken={(val) => { setNotion2apiToken(val); setNotion2apiTestResult(null); }}
+                notion2apiAutoLaunch={notion2apiAutoLaunch}
+                setNotion2apiAutoLaunch={setNotion2apiAutoLaunch}
+                notion2apiStatus={notion2apiStatus}
+                notion2apiModels={notion2apiModels}
+                handleTestNotion2api={handleTestNotion2api}
+                isTestingNotion2api={isTestingNotion2api}
+                notion2apiTestResult={notion2apiTestResult}
+                onRefreshNotion2api={async () => { await loadNotion2apiStatus(); await loadNotion2apiModels(); await loadModels(); }}
                 // Custom Endpoint
                 customEndpointName={customEndpointName}
                 setCustomEndpointName={(val) => { setCustomEndpointName(val); setCustomEndpointTestResult(null); }}

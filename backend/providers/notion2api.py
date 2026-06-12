@@ -21,8 +21,17 @@ class Notion2APIProvider(LLMProvider):
     provider_prefix = "notion2api"
 
     def _get_config(self) -> tuple[str, str]:
-        base_url = os.getenv("NOTION2API_BASE_URL", DEFAULT_NOTION2API_BASE_URL).strip()
-        token = os.getenv("NOTION2API_API_KEY", "").strip()
+        try:
+            from ..settings import get_settings
+            settings = get_settings()
+            stored_url = settings.notion2api_base_url
+            stored_token = settings.notion2api_api_key or ""
+        except Exception:
+            stored_url = DEFAULT_NOTION2API_BASE_URL
+            stored_token = ""
+
+        base_url = (os.getenv("NOTION2API_BASE_URL") or stored_url or DEFAULT_NOTION2API_BASE_URL).strip()
+        token = (os.getenv("NOTION2API_API_KEY") or stored_token or "").strip()
         return base_url.rstrip("/"), token
 
     def _headers(self, token: str) -> Dict[str, str]:

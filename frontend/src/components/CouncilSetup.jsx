@@ -57,7 +57,7 @@ function getConfiguredModelSources(settings) {
   return {
     openrouter: !!settings.openrouter_api_key_set && (ep.openrouter !== false),
     ollama: !!settings.ollama_base_url && (ep.ollama !== false),
-    direct: hasDirect && (ep.direct !== false),
+    direct: hasDirect && ((ep.direct !== false) || (settings.notion2api_api_key_set && ep.notion2api !== false)),
     custom: !!settings.custom_endpoint_url && (ep.custom !== false),
   };
 }

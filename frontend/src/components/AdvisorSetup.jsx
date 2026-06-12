@@ -116,7 +116,7 @@ function getAdvisorModelSources(settings) {
   return {
     openrouter: !!settings.openrouter_api_key_set && (ep.openrouter !== false),
     ollama: !!settings.ollama_base_url && (ep.ollama !== false),
-    direct: hasAnyDirectProviderKey(settings) && (ep.direct !== false),
+    direct: hasAnyDirectProviderKey(settings) && ((ep.direct !== false) || (settings.notion2api_api_key_set && ep.notion2api !== false)),
     custom: !!settings.custom_endpoint_url && (ep.custom !== false),
   };
 }

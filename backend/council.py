@@ -29,6 +29,7 @@ from .providers.groq import GroqProvider
 from .providers.custom_openai import CustomOpenAIProvider
 from .providers.nvidia import NvidiaProvider
 from .providers.opencode import OpenCodeProvider
+from .providers.notion2api import Notion2APIProvider
 
 # Initialize providers
 PROVIDERS = {
@@ -42,6 +43,7 @@ PROVIDERS = {
     "openrouter": OpenRouterProvider(),
     "ollama": OllamaProvider(),
     "custom": CustomOpenAIProvider(),
+    "notion2api": Notion2APIProvider(),
     "opencode-zen": OpenCodeProvider(product="zen"),
     "opencode-go": OpenCodeProvider(product="go"),
 }

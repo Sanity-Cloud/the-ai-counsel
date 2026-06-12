@@ -48,7 +48,8 @@ DEFAULT_ENABLED_PROVIDERS = {
     "ollama": False,
     "groq": False,
     "direct": False,  # Master toggle for all direct connections
-    "custom": False   # Custom OpenAI-compatible endpoint
+    "custom": False,  # Custom OpenAI-compatible endpoint
+    "notion2api": False  # Optional user-managed Notion2API endpoint
 }
 
 # Default direct provider toggles (individual)

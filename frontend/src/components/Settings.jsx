@@ -47,6 +47,7 @@ const normalizeEnabledProviders = (enabledProviders, data, ollamaConnected) => (
   groq: !!enabledProviders?.groq && !!data?.groq_api_key_set,
   direct: !!enabledProviders?.direct && hasAnyDirectKey(data),
   custom: !!enabledProviders?.custom && !!data?.custom_endpoint_url,
+  notion2api: !!enabledProviders?.notion2api,
 });
 
 const normalizeDirectProviderToggles = (toggles, data) => ({
@@ -140,7 +141,8 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
     ollama: false,
     groq: false,
     direct: false,  // Master toggle for all direct connections
-    custom: false   // Custom OpenAI-compatible endpoint
+    custom: false,  // Custom OpenAI-compatible endpoint
+    notion2api: false  // Optional env-configured Notion2API endpoint
   });
 
   // Individual direct provider toggles
@@ -313,7 +315,7 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
   ]);
 
   // Helper to determine if filters need to switch based on availability
-  const isRemoteAvailable = enabledProviders.openrouter || enabledProviders.direct || enabledProviders.groq || enabledProviders.custom;
+  const isRemoteAvailable = enabledProviders.openrouter || enabledProviders.direct || enabledProviders.groq || enabledProviders.custom || enabledProviders.notion2api;
   const isLocalAvailable = enabledProviders.ollama;
 
   const getNewFilter = (currentFilter) => {
@@ -436,6 +438,7 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
           groq: !!data.groq_api_key_set,
           direct: hasDirectConfigured,
           custom: !!data.custom_endpoint_url,
+          notion2api: !!data.enabled_providers?.notion2api,
         }, data, ollamaStatus?.connected));
       }
 
@@ -923,7 +926,8 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
         ollama: false,
         groq: false,
         direct: false,
-        custom: false
+        custom: false,
+        notion2api: false
       });
       resetCustomEndpointLocalState();
 
@@ -977,7 +981,8 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
           ollama: false,
           groq: false,
           direct: false,
-          custom: false
+          custom: false,
+          notion2api: false
         },
         custom_endpoint_name: '',
         custom_endpoint_url: '',
@@ -1323,6 +1328,17 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
       models.push(...filteredDirectModels);
     }
 
+    // Add optional Notion2API models if enabled. The provider is configured
+    // through environment variables, not through the generic custom endpoint UI.
+    if (enabledProviders.notion2api) {
+      const notionModels = directAvailableModels.filter(m =>
+        m.source === 'notion2api'
+        || m.provider === 'Notion2API'
+        || String(m.id || '').startsWith('notion2api:')
+      );
+      models.push(...notionModels);
+    }
+
     // Add custom endpoint models if enabled and configured
     if (enabledProviders.custom && customEndpointModels.length > 0) {
       models.push(...customEndpointModels);
@@ -1525,6 +1541,7 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
                 setStage2Temperature={setStage2Temperature}
                 customEndpointName={customEndpointName}
                 customEndpointUrl={customEndpointUrl}
+                directAvailableModels={directAvailableModels}
               />
             )}
 

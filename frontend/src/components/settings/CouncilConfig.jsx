@@ -44,13 +44,21 @@ export default function CouncilConfig({
     setStage2Temperature,
     customEndpointName,
     customEndpointUrl,
+    directAvailableModels = [],
 }) {
+    const hasNotion2ApiModels = directAvailableModels.some(m =>
+        m?.source === 'notion2api'
+        || m?.provider === 'Notion2API'
+        || String(m?.id || '').startsWith('notion2api:')
+    );
+
     const isSourceConfigured = (source) => {
         switch (source) {
             case 'openrouter': return !!settings?.openrouter_api_key_set;
             case 'ollama': return ollamaStatus?.connected;
             case 'groq': return !!settings?.groq_api_key_set;
             case 'custom': return !!(settings?.custom_endpoint_url);
+            case 'notion2api': return hasNotion2ApiModels;
             case 'openai': return !!settings?.openai_api_key_set;
             case 'anthropic': return !!settings?.anthropic_api_key_set;
             case 'google': return !!settings?.google_api_key_set;
@@ -115,6 +123,7 @@ export default function CouncilConfig({
                                             openrouter: isEnabled ? prev.openrouter : false,
                                             groq: isEnabled ? prev.groq : false,
                                             custom: isEnabled ? prev.custom : false,
+                                            notion2api: isEnabled ? prev.notion2api : false,
                                         }));
                                         if (!isEnabled) {
                                             setDirectProviderToggles({
@@ -215,6 +224,33 @@ export default function CouncilConfig({
                                     <span className="toggle-text" style={{ fontSize: '13px' }}>{settings?.custom_endpoint_name || customEndpointName || 'Custom Endpoint'}</span>
                                 </label>
                             )}
+
+                            <label
+                                className={`toggle-wrapper ${!isSourceConfigured('notion2api') ? 'source-disabled' : ''}`}
+                                title={!isSourceConfigured('notion2api') ? 'No Notion2API models found from the backend /api/models/direct endpoint' : ''}
+                            >
+                                <div className="toggle-switch direct-toggle">
+                                    <input
+                                        type="checkbox"
+                                        checked={isSourceConfigured('notion2api') && !!enabledProviders.notion2api}
+                                        disabled={!isSourceConfigured('notion2api')}
+                                        onChange={(e) => {
+                                            const on = e.target.checked;
+                                            setEnabledProviders(prev => ({
+                                                ...prev,
+                                                notion2api: on,
+                                            }));
+                                        }}
+                                    />
+                                    <span className="slider"></span>
+                                </div>
+                                <span className="toggle-text" style={{ fontSize: '13px' }}>
+                                    Notion2API
+                                    {!isSourceConfigured('notion2api') && (
+                                        <span className="toggle-hint"> - no models found</span>
+                                    )}
+                                </span>
+                            </label>
                         </div>
 
                         {/* Direct provider grid */}

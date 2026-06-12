@@ -5,6 +5,11 @@ export const getModelVisuals = (modelId) => {
 
   const id = modelId.toLowerCase();
 
+  // Notion2API
+  if (id.startsWith('notion2api:')) {
+    return { name: 'Notion2API', color: '#64748b', short: 'Notion', icon: 'N2' };
+  }
+
   // Ollama - CHECK FIRST because "ollama" contains "llama" substring
   if (id.startsWith('ollama:')) {
     return { name: 'Ollama', color: '#f1f5f9', short: 'Local', icon: '🦙' };

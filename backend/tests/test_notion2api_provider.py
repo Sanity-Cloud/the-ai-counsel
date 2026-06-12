@@ -84,6 +84,7 @@ async def test_notion2api_query_uses_dedicated_prefix_and_endpoint(fake_httpx, n
     assert sent["headers"]["Authorization"] == "Bearer test-token"
     assert sent["json"]["model"] == "claude-opus4.7"
     assert sent["json"]["messages"] == [{"role": "user", "content": "hi"}]
+    assert sent["timeout"] == 600.0
 
 
 @pytest.mark.asyncio
@@ -166,3 +167,20 @@ async def test_notion2api_query_retries_upstream_empty_response(fake_httpx, noti
 
     assert result == {"content": "retried ok", "usage": None, "error": False}
     assert len(fake_httpx.instances) == 2
+
+
+@pytest.mark.asyncio
+async def test_notion2api_query_respects_longer_explicit_timeout(fake_httpx, notion_env):
+    fake_httpx.responses.append((
+        200,
+        {"choices": [{"message": {"content": "ok"}}]},
+        "",
+    ))
+
+    await Notion2APIProvider().query(
+        "notion2api:gpt-5.5",
+        [{"role": "user", "content": "hi"}],
+        timeout=900.0,
+    )
+
+    assert fake_httpx.instances[-1].kwargs["timeout"] == 900.0

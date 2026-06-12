@@ -16,6 +16,7 @@ from .temperature import add_temperature_if_supported
 DEFAULT_NOTION2API_BASE_URL = "http://127.0.0.1:8120/v1"
 NOTION2API_QUERY_ATTEMPTS = 3
 NOTION2API_RETRY_BASE_DELAY = 0.75
+NOTION2API_QUERY_TIMEOUT = 600.0
 
 
 
@@ -47,6 +48,13 @@ class Notion2APIProvider(LLMProvider):
 
     def _strip_prefix(self, model_id: str) -> str:
         return model_id.removeprefix(f"{self.provider_prefix}:")
+
+    def _effective_timeout(self, timeout: float | None) -> float:
+        try:
+            requested = float(timeout or 0)
+        except (TypeError, ValueError):
+            requested = 0.0
+        return max(requested, NOTION2API_QUERY_TIMEOUT)
 
     def _is_retryable_empty_response(self, status_code: int, body_text: str) -> bool:
         if status_code not in {502, 503, 504}:
@@ -92,12 +100,14 @@ class Notion2APIProvider(LLMProvider):
             temperature,
         )
 
+        effective_timeout = self._effective_timeout(timeout)
+
         try:
             last_response_text = ""
             last_status_code = 0
 
             for attempt in range(1, NOTION2API_QUERY_ATTEMPTS + 1):
-                async with httpx.AsyncClient(timeout=timeout) as client:
+                async with httpx.AsyncClient(timeout=effective_timeout) as client:
                     response = await client.post(
                         f"{base_url}/chat/completions",
                         headers=self._headers(token),
@@ -137,7 +147,7 @@ class Notion2APIProvider(LLMProvider):
             }
 
         except httpx.TimeoutException:
-            return {"error": True, "error_message": f"Notion2API request timed out after {int(timeout)}s"}
+            return {"error": True, "error_message": f"Notion2API request timed out after {int(effective_timeout)}s"}
         except httpx.ConnectError:
             return {"error": True, "error_message": f"Could not connect to Notion2API at {base_url}"}
         except Exception as exc:

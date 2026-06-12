@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Iterable
 
 from .council import query_model
+from .settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -38,14 +39,19 @@ def _is_transient_rate_limit(status_code: int, message: str) -> bool:
     if status_code == 429:
         return True
     body = (message or "").lower()
+    if status_code == 503 and any(
+        m in body for m in ("notion_429", "rate_limit", "rate limit", "fileimporterror")
+    ):
+        return True
     if status_code not in {200, 0} and any(
-        m in body for m in ("rate limit", "rate_limit", "too many requests", "throttl", "quota", "temporary", "congestion")
+        m in body for m in ("notion rate limit", "rate limit", "rate_limit", "too many requests", "throttl", "quota", "temporary", "congestion")
     ):
         return True
     # Pure text match when there is no status code at all
     if status_code == 0 and any(
         m in body for m in (
-            "rate limit", "rate_limit", "429", "too many requests", "quota", "throttl", "temporary", "congestion"
+            "notion rate limit", "rate limit", "rate_limit",
+            "429", "too many requests", "quota", "throttl", "temporary", "congestion"
         )
     ):
         return True
@@ -97,12 +103,32 @@ def _is_timeout_error(message: str) -> bool:
     return any(marker in text for marker in ("timeout", "timed out", "readtimeout", "connecttimeout"))
 
 
+def _is_notion2api_custom_endpoint() -> bool:
+    settings = get_settings()
+    if not settings.enabled_providers.get("custom"):
+        return False
+    name = (settings.custom_endpoint_name or "").lower()
+    url = (settings.custom_endpoint_url or "").lower()
+    if "notion" in name or "notion2api" in name:
+        return True
+    return "notion" in url or "notion2api" in url
+
+
+def _skip_notion2api_preflight(model: str) -> bool:
+    normalized = (model or "").strip().lower()
+    if normalized.startswith("notion2api:"):
+        return True
+    return normalized.startswith("custom:") and _is_notion2api_custom_endpoint()
+
+
 async def _preflight_one(model: str, timeout: float) -> tuple[str, str | None, bool, bool, int]:
     """Ping a single model once.
 
     Returns (model, error_message, timed_out, rate_limited, http_status_code).
     error_message is None on success.
     """
+    if _skip_notion2api_preflight(model):
+        return model, None, False, False, 200
     messages = [{"role": "user", "content": PREFLIGHT_PROMPT}]
     try:
         result = await query_model(model, messages, timeout=timeout, temperature=0.0)

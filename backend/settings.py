@@ -184,6 +184,14 @@ class Settings(BaseModel):
     # Execution Mode
     execution_mode: str = "full"  # Default execution mode: 'chat_only', 'chat_ranking', 'full'
 
+    # Notion2API Rate Limiting & Throttling
+    attachment_delay_seconds: float = 20.0
+    attachment_max_attempts: int = 3
+    attachment_retry_delay_seconds: float = 35.0
+    attachment_poll_interval_seconds: float = 2.0
+    attachment_poll_timeout_seconds: float = 60.0
+    model_timeout_seconds: int = 300
+
     # Iterative Debate
     critique_mode: str = "freeform"        # "freeform", "paragraph", "claim"
     debate_rounds: int = 1                 # Number of rounds (1 = current behavior)

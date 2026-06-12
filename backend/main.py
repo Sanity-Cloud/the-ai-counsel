@@ -1,4 +1,4 @@
-﻿"""FastAPI backend for LLM Council."""
+"""FastAPI backend for LLM Council."""
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -1471,6 +1471,7 @@ class UpdateSettingsRequest(BaseModel):
     debate_rounds: Optional[int] = None
     auto_converge: Optional[bool] = None
     convergence_threshold: Optional[int] = None
+    model_timeout_seconds: Optional[int] = None
 
     # System Prompts
     stage1_prompt: Optional[str] = None
@@ -1563,6 +1564,7 @@ async def get_app_settings():
         "council_temperature": settings.council_temperature,
         "chairman_temperature": settings.chairman_temperature,
         "stage2_temperature": settings.stage2_temperature,
+        "model_timeout_seconds": settings.model_timeout_seconds,
 
         # Prompts
         "stage1_prompt": settings.stage1_prompt,
@@ -1808,6 +1810,12 @@ async def update_app_settings(request: UpdateSettingsRequest):
         updates["chairman_temperature"] = request.chairman_temperature
     if request.stage2_temperature is not None:
         updates["stage2_temperature"] = request.stage2_temperature
+        
+    # Timeout Settings
+    if request.model_timeout_seconds is not None:
+        if request.model_timeout_seconds < 30 or request.model_timeout_seconds > 1800:
+            raise HTTPException(status_code=400, detail="model_timeout_seconds must be between 30 and 1800")
+        updates["model_timeout_seconds"] = request.model_timeout_seconds
 
     if request.date_format is not None:
         valid_formats = ("auto", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY-MM-DD")

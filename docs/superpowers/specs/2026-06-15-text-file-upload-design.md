@@ -187,7 +187,7 @@ Frontend tests or build verification:
 
 ## Documentation Sync
 
-Update these surfaces with the implementation:
+The implementation is not complete unless the user-facing docs and the API skill are updated in the same change set. Update these surfaces with the implementation:
 
 - `docs/mcp/TOOLS.md`
 - `docs/mcp/EXAMPLES.md`
@@ -195,6 +195,17 @@ Update these surfaces with the implementation:
 - `skills/the-ai-counsel-api/SKILL.md`
 - `README.md` if upload support is user-facing in the release notes/install flow
 - `AGENTS.md` only if architecture or operational guidance changes
+
+Required documentation content:
+
+- Supported file types and limits.
+- OCR behavior, including when OCR is attempted and what happens when OCR dependencies are unavailable.
+- REST request and response examples for `documents`.
+- MCP tool parameter examples for pre-extracted text and base64 file input.
+- UI behavior and warning states.
+- Privacy/storage note that raw uploaded files are not persisted.
+
+The `skills/the-ai-counsel-api/SKILL.md` update must include the new `documents` parameter wherever MCP or REST examples can accept file-derived context.
 
 ## Decision
 

@@ -380,7 +380,7 @@ Deliberation tools also accept optional document inputs. Base64 files are extrac
 
 * **Option B: Remote SSE (Zero-install for containers/servers)**
   ```bash
-  claude mcp add the-ai-counsel --url http://yourserver.com:8001/mcp/sse
+  claude mcp add --transport sse the-ai-counsel http://yourserver.com:8001/mcp/sse
   ```
 
 Then ask Claude: "check the council health" to verify the connection (`providers` → action `health`; expect 10 tools in `/api/health`).

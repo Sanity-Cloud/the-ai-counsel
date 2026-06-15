@@ -95,7 +95,25 @@ def validate_documents_for_request(
                 raise DocumentError(f"{name} is not valid base64.") from exc
             if len(decoded) > limits.max_document_bytes:
                 raise DocumentError(f"{name} is too large.")
-            raise DocumentError(f"{name} must be extracted before model submission.")
+            extracted = extract_text_bytes(name, mime_type, decoded, limits)
+            text = str(extracted.get("text") or "")
+            if total_remaining <= 0:
+                text = ""
+                truncated = True
+            elif len(text) > total_remaining:
+                text = text[:total_remaining]
+                truncated = True
+            else:
+                truncated = False
+            total_remaining -= len(text)
+            warnings = ["Document text was truncated."] if truncated else []
+            validated.append({
+                "name": name,
+                "mime_type": mime_type,
+                "text": text,
+                "metadata": _coerce_metadata(extracted, text, warnings, truncated),
+            })
+            continue
 
         text = str(raw.get("text") or "")
         if len(text) > limits.max_document_chars:

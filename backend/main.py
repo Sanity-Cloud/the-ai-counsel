@@ -1251,6 +1251,8 @@ async def start_debate_stream(conversation_id: str, body: StartDebateRequest, re
                 preflight=True,
             ):
                 event_type = event.get("type", "")
+                if event_type == "advisor_debate_start" and "data" in event:
+                    event["data"]["question"] = body.question
                 _update_advisor_run(conversation_id, event)
 
                 if event_type == "advisor_complete":

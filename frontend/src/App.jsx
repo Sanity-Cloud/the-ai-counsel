@@ -104,7 +104,7 @@ const buildAdvisorProgressMessage = (progress, existing = {}) => {
     role: 'assistant',
     type: 'advisor_debate',
     mode: 'advisors',
-    isRunning: true,
+    isRunning: progress.stage !== 'complete' && progress.stage !== 'error',
     phase: progress.stage || existing.phase || 'initializing',
     currentRound: progress.current_round || existing.currentRound || 0,
     maxRounds: progress.max_rounds || existing.maxRounds || metadata.max_rounds || 3,

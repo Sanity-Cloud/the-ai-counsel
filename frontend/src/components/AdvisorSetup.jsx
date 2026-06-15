@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { api, buildAvailableSearchProviders } from '../api';
 import SearchableModelSelect from './SearchableModelSelect';
 import { getShortModelName } from '../utils/modelHelpers';
+import DocumentUpload from './DocumentUpload';
 import './AdvisorSetup.css';
 
 const RECOMMENDED_PERSONA_IDS = ['skeptic', 'pragmatist', 'innovator'];
@@ -138,6 +139,9 @@ export default function AdvisorSetup({
   const [searchPopoverOpen, setSearchPopoverOpen] = useState(false);
   const searchPopoverRef = useRef(null);
   const [question, setQuestion] = useState('');
+  const [documentPayload, setDocumentPayload] = useState({ documents: [], attachments: [], warnings: [] });
+  const [documentsBusy, setDocumentsBusy] = useState(false);
+  const [documentResetKey, setDocumentResetKey] = useState(0);
   const [personasExpanded, setPersonasExpanded] = useState(true);
   const [presets, setPresets] = useState([]);
   const [activePresetId, setActivePresetId] = useState(null);
@@ -557,7 +561,8 @@ export default function AdvisorSetup({
   const canStart =
     selectedPersonaIds.length >= 2 &&
     (modelMode === 'simple' ? !!chosenModel : selectedPersonaIds.every((id) => !!modelAssignments[id])) &&
-    question.trim().length > 0;
+    question.trim().length > 0 &&
+    !documentsBusy;
 
   const getHint = () => {
     if (canStart) return '↵ Enter to start · Shift+Enter for new line';
@@ -577,8 +582,12 @@ export default function AdvisorSetup({
       modelAssignments: modelMode === 'advanced' ? modelAssignments : null,
       maxRounds: rounds,
       searchProvider,
+      documents: documentPayload.documents || [],
+      attachments: documentPayload.attachments || [],
     };
     onStartDebate(payload);
+    setDocumentPayload({ documents: [], attachments: [], warnings: [] });
+    setDocumentResetKey((key) => key + 1);
   };
 
   // ── Render ───────────────────────────────────────────────────────────────
@@ -623,6 +632,12 @@ export default function AdvisorSetup({
             )}
           </button>
         </div>
+        <DocumentUpload
+          disabled={isLoading}
+          resetKey={documentResetKey}
+          onChange={setDocumentPayload}
+          onBusyChange={setDocumentsBusy}
+        />
       </div>
 
       {/* Rounds + Web Search — compact config directly below question */}

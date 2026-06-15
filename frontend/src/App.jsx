@@ -652,7 +652,11 @@ function App() {
 
       setAppMode('advisors');
 
-      const userMessage = { role: 'user', content: options.question };
+      const userMessage = {
+        role: 'user',
+        content: options.question,
+        ...(options.attachments?.length ? { attachments: options.attachments } : {}),
+      };
       const debateMessage = {
         role: 'assistant',
         type: 'advisor_debate',
@@ -872,7 +876,7 @@ function App() {
     }
   };
 
-  const handleSendMessage = async (content, searchProvider) => {
+  const handleSendMessage = async (content, searchProvider, documentPayload = {}) => {
     if (!currentConversationId) return;
 
     let effectiveMode = executionMode;
@@ -930,7 +934,11 @@ function App() {
       }
 
       // Optimistically add user message to UI
-      const userMessage = { role: 'user', content };
+      const userMessage = {
+        role: 'user',
+        content,
+        ...(documentPayload.attachments?.length ? { attachments: documentPayload.attachments } : {}),
+      };
       setCurrentConversation((prev) => ({
         ...prev,
         id: activeConversationId, // transition draft ID to actual database UUID
@@ -982,6 +990,7 @@ function App() {
         executionMode: effectiveMode,
         councilModels,
         chairmanModel: effectiveMode === 'full' ? chairmanModel : undefined,
+        documents: documentPayload.documents || [],
       };
       if (isDebate) {
         streamOptions.debateRounds = debateRounds;

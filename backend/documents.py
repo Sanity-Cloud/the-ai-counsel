@@ -298,9 +298,14 @@ def extract_pdf_bytes(
     filename = sanitize_filename(name)
     warnings: list[str] = []
     ocr_used = False
-    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=True) as tmp:
+    
+    # Use delete=False for compatibility with Windows file locking when opening with pdfplumber
+    tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+    try:
         tmp.write(data)
         tmp.flush()
+        tmp.close()  # Close the file handle so pdfplumber can open it on Windows
+        
         page_count, page_texts, weak_pages = _read_pdf_text(tmp.name, filename, limits)
 
         if weak_pages and len(weak_pages) <= limits.max_ocr_pages and ocr_available():
@@ -315,6 +320,11 @@ def extract_pdf_bytes(
             finally:
                 if output_path and os.path.exists(output_path):
                     os.unlink(output_path)
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
 
     if weak_pages:
         if len(weak_pages) > limits.max_ocr_pages:

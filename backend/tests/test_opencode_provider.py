@@ -341,7 +341,7 @@ async def test_query_messages_protocol_posts_to_messages_endpoint(fake_httpx, fa
     assert body["messages"] == [{"role": "user", "content": "hi"}]
     assert "stream" not in body
     headers = fake_httpx.instances[0].kwargs["headers"]
-    assert headers["Authorization"] == "Bearer sk-zen-test"
+    assert headers["x-api-key"] == "sk-zen-test"
 
 
 @pytest.mark.asyncio

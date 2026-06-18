@@ -119,6 +119,40 @@ async def _events_from_list(events: list[dict]) -> AsyncIterator[dict]:
         yield event
 
 
+async def wrap_with_progress(events: AsyncIterator[dict]) -> AsyncIterator[dict]:
+    """
+    Wrap an event stream, emitting MCP progress notifications as events pass through.
+    This continuous heartbeat prevents client-side read timeouts (e.g., 60 seconds)
+    during long-running deliberations.
+    """
+    try:
+        from mcp.server.lowlevel.server import request_ctx
+        ctx = request_ctx.get()
+        progress_token = ctx.meta.progressToken if ctx.meta else None
+    except LookupError:
+        # Not running inside an active MCP request context (e.g., unit tests)
+        ctx = None
+        progress_token = None
+
+    progress_val = 0.0
+
+    async for event in events:
+        yield event
+
+        if progress_token and ctx:
+            progress_val += 1.0
+            event_type = event.get("type", "processing")
+            try:
+                await ctx.session.send_progress_notification(
+                    progress_token=progress_token,
+                    progress=progress_val,
+                    message=f"Event: {event_type}",
+                )
+            except Exception:
+                # Suppress errors so a failed notification doesn't kill the stream
+                pass
+
+
 async def buffer_stage1(
     events: AsyncIterator[dict],
     conversation_id: str,

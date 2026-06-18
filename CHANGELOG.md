@@ -5,17 +5,21 @@ All notable changes to The AI Counsel will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.4] - 2026-06-18
+### Changed
+- Cleaned up backend and MCP test import placement to resolve the affected Ruff violations.
+
+### Fixed
+- `POST /api/ask` now saves every successful one-shot run as a UI-visible conversation, including attachments, search metadata, stage results, and cost data.
+- One-shot REST responses now return `conversation_id`, and MCP quick model chat propagates the same ID.
+
 ## [0.10.3] - 2026-06-18
 ### Changed
 - Miscellaneous backend improvements and backend test updates.
 
-
 ## [0.10.2] - 2026-06-18
 ### Fixed
 - True background heartbeat for MCP SSE streams to prevent 60s client read timeouts during silent inference steps (like Stage 2 and Stage 3).
-
-
-## [Unreleased]
 
 ## [0.10.1] - 2026-06-17
 

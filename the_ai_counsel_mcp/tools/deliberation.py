@@ -100,7 +100,7 @@ def register(server, base_url: str) -> None:
             return json.dumps({"status": "error", "message": str(exc)}, indent=2)
 
     @server.tool(description=(
-        "Chat with a single model. action: 'quick' (one-shot, no memory) or "
+        "Chat with a single model. action: 'quick' (one-shot, saved with no prior memory) or "
         "'multi_turn' (pass conversation_id from prior response to continue). "
         "model must include provider prefix, e.g. openai:gpt-4.1 or ollama:llama3. "
         "Results include usage/cost details and a cost_report."
@@ -129,6 +129,7 @@ def register(server, base_url: str) -> None:
                         documents=prepared_documents,
                     )
                     return json.dumps({
+                        "conversation_id": result.get("conversation_id"),
                         "model": result.get("model", model),
                         "response": result.get("response"),
                         "error": result.get("error"),

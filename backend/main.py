@@ -15,6 +15,7 @@ import secrets
 import uuid
 import json
 import asyncio
+from dataclasses import dataclass, field
 
 from . import storage
 from .council import generate_conversation_title, generate_search_query, stage1_collect_responses, stage2_collect_rankings, stage3_synthesize_final, calculate_aggregate_rankings, PROVIDERS
@@ -508,9 +509,6 @@ async def _run_model_preflight(models: List[str]) -> str:
     if result.ok:
         return ""
     return build_preflight_error_message(result)
-
-
-from dataclasses import dataclass, field
 
 
 @dataclass
@@ -1393,7 +1391,7 @@ async def send_message_sync(conversation_id: str, body: SendMessageRequest):
 
 @app.post("/api/ask")
 async def ask_oneshot(body: AskRequest):
-    """One-shot query: no conversation, no state. Returns JSON directly."""
+    """Run a one-shot query, persist it as a conversation, and return JSON."""
     settings = get_settings()
     models = body.models if body.models else settings.council_models
 
@@ -1411,11 +1409,12 @@ async def ask_oneshot(body: AskRequest):
         raise HTTPException(status_code=400, detail=preflight_error)
 
     search_context = ""
+    search_query = ""
     if body.web_search:
-        search_context, _, _ = await _fetch_search_context(body.content, settings)
+        search_context, search_query, _ = await _fetch_search_context(body.content, settings)
 
     try:
-        effective_content, _ = _prepare_document_context(body.content, body.documents)
+        effective_content, attachments = _prepare_document_context(body.content, body.documents)
     except DocumentError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1425,9 +1424,42 @@ async def ask_oneshot(body: AskRequest):
         preflight=False,
     )
 
+    conversation_id = str(uuid.uuid4())
+    conversation = storage.create_conversation(conversation_id)
+    conversation["title"] = storage.derive_conversation_title(body.content)
+    storage.add_user_message(
+        conversation_id,
+        body.content,
+        conversation=conversation,
+        attachments=attachments,
+    )
+
+    metadata = {
+        "execution_mode": body.execution_mode,
+        "cost_report": result.cost_report,
+    }
+    if body.execution_mode in ("chat_ranking", "full"):
+        metadata["label_to_model"] = result.label_to_model
+        metadata["aggregate_rankings"] = result.aggregate_rankings
+    if search_context:
+        metadata["search_context"] = search_context
+        metadata["web_search"] = True
+    if search_query:
+        metadata["search_query"] = search_query
+
+    storage.add_assistant_message(
+        conversation_id,
+        result.stage1,
+        result.stage2 if body.execution_mode in ("chat_ranking", "full") else None,
+        result.stage3 if body.execution_mode == "full" else None,
+        metadata,
+        conversation=conversation,
+    )
+
     if body.execution_mode == "chat_only" and len(result.stage1) == 1:
         r = result.stage1[0]
         return {
+            "conversation_id": conversation_id,
             "response": r.get("response"),
             "model": r.get("model"),
             "error": r.get("error"),
@@ -1437,10 +1469,15 @@ async def ask_oneshot(body: AskRequest):
         }
 
     if body.execution_mode == "chat_only":
-        return {"responses": result.stage1, "cost_report": result.cost_report}
+        return {
+            "conversation_id": conversation_id,
+            "responses": result.stage1,
+            "cost_report": result.cost_report,
+        }
 
     if body.execution_mode == "chat_ranking":
         return {
+            "conversation_id": conversation_id,
             "responses": result.stage1,
             "rankings": result.stage2,
             "aggregate_rankings": result.aggregate_rankings,
@@ -1449,6 +1486,7 @@ async def ask_oneshot(body: AskRequest):
         }
 
     return {
+        "conversation_id": conversation_id,
         "response": result.stage3.get("response") if result.stage3 else None,
         "chairman_model": result.stage3.get("model") if result.stage3 else None,
         "responses": result.stage1,

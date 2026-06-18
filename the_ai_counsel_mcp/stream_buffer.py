@@ -136,23 +136,29 @@ async def wrap_with_progress(events: AsyncIterator[dict]) -> AsyncIterator[dict]
         ctx = None
         progress_token = None
 
-    if not (progress_token and ctx):
+    if not ctx:
         async for event in events:
             yield event
         return
 
-    # Background heartbeat task to prevent 60s client timeouts during silent inference
+    # Background heartbeat task to prevent 60s client timeouts during silent inference.
+    # Uses send_log_message (no progressToken required) so the heartbeat fires even when
+    # the MCP client does not provide a progressToken in its tool call.
     async def heartbeat():
-        progress_val = 0.0
         while True:
             await asyncio.sleep(10)
-            progress_val += 0.1
             try:
-                await ctx.session.send_progress_notification(
-                    progress_token=progress_token,
-                    progress=progress_val,
-                    message="Deliberating...",
-                )
+                if progress_token:
+                    await ctx.session.send_progress_notification(
+                        progress_token=progress_token,
+                        progress=0.5,
+                        message="Deliberating...",
+                    )
+                else:
+                    await ctx.session.send_log_message(
+                        level="debug",
+                        data="deliberation in progress",
+                    )
             except Exception:
                 # Connection closed or session destroyed, stop heartbeat
                 break

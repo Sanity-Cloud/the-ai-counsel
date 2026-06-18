@@ -13,7 +13,7 @@ def server():
     return create_server(base_url="http://test:8001")
 
 
-from the_ai_counsel_mcp.tests.conftest import get_json, get_text
+from the_ai_counsel_mcp.tests.conftest import get_json
 
 
 # ── Helpers to build SSE bodies ────────────────────────────────────────────────

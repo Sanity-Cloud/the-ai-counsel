@@ -1,11 +1,9 @@
 """3-stage LLM Council orchestration."""
 
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any
 import asyncio
 import logging
 import re
-from . import openrouter
-from . import ollama_client
 from .config import get_council_models, get_chairman_model
 from .costs import attach_cost
 from .settings import get_settings
@@ -546,7 +544,7 @@ async def stage3_synthesize_final(
         logger.error(f"Unexpected error in Stage 3 synthesis: {e}")
         error_response = {
             "model": chairman_model,
-            "response": f"Error: Unable to generate final synthesis due to unexpected error.",
+            "response": "Error: Unable to generate final synthesis due to unexpected error.",
             "error": True,
             "error_message": str(e),
             "usage": None,

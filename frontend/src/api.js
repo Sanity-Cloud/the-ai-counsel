@@ -519,11 +519,15 @@ export const api = {
       councilModels = null,
       chairmanModel = null,
       documents = null,
+      critiqueMode = null,
+      auditProfile = null,
     } = options;
     const body = {
       content,
       search_provider: searchProvider,
       execution_mode: executionMode,
+      critique_mode: critiqueMode,
+      audit_profile: auditProfile,
     };
     if (councilModels && councilModels.length > 0) {
       body.council_models = councilModels;
@@ -567,12 +571,16 @@ export const api = {
       chairmanModel = null,
       debateRounds = null,
       documents = null,
+      critiqueMode = null,
+      auditProfile = null,
     } = options;
     const body = {
       content,
       search_provider: searchProvider,
       execution_mode: executionMode,
       debate_rounds: debateRounds,
+      critique_mode: critiqueMode,
+      audit_profile: auditProfile,
     };
     if (councilModels && councilModels.length > 0) {
       body.council_models = councilModels;

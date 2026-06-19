@@ -370,6 +370,9 @@ def _parse_audit_verdicts(ranking_text: str, expected_claim_ids: list = None) ->
         missing = set(expected_claim_ids) - set(result.keys())
         if missing:
             raise EvaluationError(f"Missing expected claim IDs: {missing}")
+        extra = set(result.keys()) - set(expected_claim_ids)
+        if extra:
+            raise EvaluationError(f"Rejected extra/unknown claim IDs in evaluation: {extra}")
 
     verdict_combos = []
 
@@ -421,6 +424,7 @@ async def run_iterative_debate(
     history: Optional[List[Dict[str, str]]] = None,
     debate_rounds: Optional[int] = None,
     conversation_id: Optional[str] = None,
+    critique_mode: Optional[str] = None,
 ) -> AsyncGenerator[Dict[str, Any], None]:
     """
     Orchestrate multi-round debate. Yields SSE-ready event dicts.
@@ -440,7 +444,7 @@ async def run_iterative_debate(
     )
     auto_converge = settings.auto_converge
     convergence_threshold = settings.convergence_threshold
-    critique_mode = settings.critique_mode  # "freeform", "paragraph", or "claim"
+    critique_mode = critique_mode or settings.critique_mode or "freeform"
 
     # Validate: chat_only doesn't support multi-round
     if execution_mode == "chat_only":

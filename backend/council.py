@@ -105,7 +105,7 @@ async def _query_model_gated(
     temperature: float,
     attachments: List[Dict[str, Any]] | None = None,
     conversation_id: str | None = None,
-    max_tokens: Optional[int] = None,
+    max_output_tokens: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Serialize Notion2API custom and direct calls with stagger and 503 backoff."""
     lock = _notion_council_lock() if _is_notion2api_model(model) else None
@@ -117,7 +117,7 @@ async def _query_model_gated(
             temperature=temperature,
             attachments=attachments,
             conversation_id=conversation_id,
-            max_tokens=max_tokens,
+            max_output_tokens=max_output_tokens,
         )
 
     messages = _vary_notion_thread_title(model, messages)
@@ -132,7 +132,7 @@ async def _query_model_gated(
                 temperature=temperature,
                 attachments=attachments,
                 conversation_id=conversation_id,
-                max_tokens=max_tokens,
+                max_output_tokens=max_output_tokens,
             )
 
     result = await _make_call()
@@ -203,32 +203,32 @@ def get_provider_for_model(model_id: str) -> Any:
 async def _query_model_raw(
     model: str,
     messages: List[Dict[str, str]],
+    *,
     timeout: float = 120.0,
     temperature: float = 0.7,
-    conversation_id: "str | None" = None,
-    attachments: List[Dict[str, Any]] | None = None,
-    max_tokens: Optional[int] = None,
+    max_output_tokens: Optional[int] = None,
+    conversation_id: Optional[str] = None,
+    attachments: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Dispatch query to appropriate provider directly."""
     provider = get_provider_for_model(model)
-    kwargs = {}
-    import inspect
     try:
-        sig = inspect.signature(provider.query)
-        if "conversation_id" in sig.parameters:
-            kwargs["conversation_id"] = conversation_id
-        if "attachments" in sig.parameters:
-            kwargs["attachments"] = attachments
-        if "max_tokens" in sig.parameters and max_tokens is not None:
-            kwargs["max_tokens"] = max_tokens
-
-        response = await provider.query(model, messages, timeout, temperature, **kwargs)
-    except Exception:
-        # Fallback to plain query
-        try:
+        from .providers.notion2api import Notion2APIProvider
+        if isinstance(provider, Notion2APIProvider):
+            response = await provider.query(
+                model_id=model,
+                messages=messages,
+                timeout=timeout,
+                temperature=temperature,
+                max_output_tokens=max_output_tokens,
+                conversation_id=conversation_id,
+                attachments=attachments,
+            )
+        else:
             response = await provider.query(model, messages, timeout, temperature)
-        except Exception as e:
-            return {"error": True, "error_message": str(e)}
+    except Exception as exc:
+        logger.exception("Provider call failed for %s", model)
+        response = {"error": True, "error_message": str(exc)}
 
     if isinstance(response, dict):
         return await attach_cost(model, response)
@@ -238,11 +238,12 @@ async def _query_model_raw(
 async def query_model(
     model: str,
     messages: List[Dict[str, str]],
+    *,
     timeout: float = 120.0,
     temperature: float = 0.7,
-    conversation_id: "str | None" = None,
-    attachments: List[Dict[str, Any]] | None = None,
-    max_tokens: Optional[int] = None,
+    max_output_tokens: Optional[int] = None,
+    conversation_id: Optional[str] = None,
+    attachments: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Dispatch query with serialization for Notion2API."""
     if _is_notion2api_model(model):
@@ -253,7 +254,7 @@ async def query_model(
             temperature=temperature,
             attachments=attachments,
             conversation_id=conversation_id,
-            max_tokens=max_tokens,
+            max_output_tokens=max_output_tokens,
         )
     return await _query_model_raw(
         model,
@@ -262,7 +263,7 @@ async def query_model(
         temperature=temperature,
         attachments=attachments,
         conversation_id=conversation_id,
-        max_tokens=max_tokens,
+        max_output_tokens=max_output_tokens,
     )
 
 
@@ -1157,6 +1158,52 @@ def calculate_aggregate_rankings(
     aggregate.sort(key=lambda x: x['average_rank'])
 
     return aggregate
+
+
+def calculate_audit_aggregate_rankings(
+    stage2_results: List[Dict[str, Any]],
+    label_to_model: Dict[str, str]
+) -> List[Dict[str, Any]]:
+    """
+    Calculate aggregate rankings for Stage 2A in Audit mode.
+    Each result contains a 'parsed' field, which is a dictionary with a 'ranking' list.
+    """
+    from collections import defaultdict
+
+    model_positions = defaultdict(list)
+
+    for result in stage2_results:
+        if result.get("error") or "parsed" not in result:
+            continue
+        parsed = result["parsed"]
+        ranking_list = parsed.get("ranking")
+        if not isinstance(ranking_list, list):
+            continue
+
+        for position, label in enumerate(ranking_list, start=1):
+            lbl_key = label.strip()
+            if lbl_key.startswith("Response "):
+                lbl_key = lbl_key.removeprefix("Response ").strip()
+            if lbl_key in label_to_model:
+                model_name = label_to_model[lbl_key]
+                model_positions[model_name].append(position)
+
+    # Calculate average position for each model
+    aggregate = []
+    for model, positions in model_positions.items():
+        if positions:
+            avg_rank = sum(positions) / len(positions)
+            aggregate.append({
+                "model": model,
+                "average_rank": round(avg_rank, 2),
+                "rankings_count": len(positions)
+            })
+
+    # Sort by average rank (lower is better)
+    aggregate.sort(key=lambda x: x['average_rank'])
+
+    return aggregate
+
 
 
 async def generate_conversation_title(user_query: str) -> str:

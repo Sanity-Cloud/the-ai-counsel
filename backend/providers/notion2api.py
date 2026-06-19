@@ -282,9 +282,12 @@ class Notion2APIProvider(LLMProvider):
         self,
         model_id: str,
         messages: List[Dict[str, str]],
+        *,
         timeout: float = 120.0,
         temperature: float = 0.7,
-        conversation_id: str | None = None,
+        max_output_tokens: Optional[int] = None,
+        conversation_id: Optional[str] = None,
+        attachments: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         base_url, token = self._get_config()
         if not base_url:
@@ -297,6 +300,8 @@ class Notion2APIProvider(LLMProvider):
             self.provider_prefix,
             temperature,
         )
+        if max_output_tokens is not None:
+            payload["max_tokens"] = max_output_tokens
 
         persist_threads = False
         try:

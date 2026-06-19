@@ -52,11 +52,13 @@ logger = logging.getLogger(__name__)
 _active_runs: Dict[str, Dict[str, Any]] = {}
 
 
-def _register_run(conversation_id: str, execution_mode: str) -> None:
+def _register_run(conversation_id: str, execution_mode: str, critique_mode: str = "freeform", audit_profile: str = "general") -> None:
     _active_runs[conversation_id] = {
         "mode": "council",
         "stage": "initializing",
         "execution_mode": execution_mode,
+        "critique_mode": critique_mode,
+        "audit_profile": audit_profile,
         "paused": False,
         "pause_event": None,
         "continuation_mode": "normal",
@@ -66,8 +68,11 @@ def _register_run(conversation_id: str, execution_mode: str) -> None:
         "queue": asyncio.Queue(),
         "search_context": "",
         "progress": {
-            "stage1": {"total": 0},
-            "stage2": {"total": 0},
+            "stage1": {"total": 0, "count": 0},
+            "stage2": {"total": 0, "count": 0},
+            "stage2a": {"total": 0, "count": 0},
+            "stage2b": {"total": 0, "count": 0},
+            "stage2c": {"total": 1, "count": 0},
         },
     }
 
@@ -375,6 +380,8 @@ class SendMessageRequest(BaseModel):
     chairman_model: Optional[str] = None
     debate_rounds: Optional[int] = None
     documents: Optional[List[Dict[str, Any]]] = None
+    critique_mode: Optional[Literal["freeform", "paragraph", "claim", "audit"]] = None
+    audit_profile: Optional[Literal["general", "legal"]] = None
 
 
 class AskRequest(BaseModel):
@@ -384,6 +391,8 @@ class AskRequest(BaseModel):
     web_search: bool = False
     execution_mode: ExecutionMode = "chat_only"
     documents: Optional[List[Dict[str, Any]]] = None
+    critique_mode: Optional[Literal["freeform", "paragraph", "claim", "audit"]] = None
+    audit_profile: Optional[Literal["general", "legal"]] = None
 
 
 class DocumentExtractJsonRequest(BaseModel):
@@ -713,17 +722,33 @@ async def get_conversation_progress(conversation_id: str):
         }
     s1 = run.get("stage1_responses") or []
     s2 = run.get("stage2_responses") or []
+
+    stage1_total = run["progress"].get("stage1", {}).get("total", 0)
+    stage2_total = run["progress"].get("stage2", {}).get("total", 0)
+
+    prog = {
+        "stage1": {"count": len(s1), "total": stage1_total},
+        "stage2": {"count": len(s2), "total": stage2_total},
+    }
+
+    if run.get("critique_mode") == "audit":
+        prog["stage2a"] = {"count": len(run.get("stage2a_responses") or []), "total": run["progress"].get("stage2a", {}).get("total", 0)}
+        prog["stage2b"] = {"count": len(run.get("stage2b_responses") or []), "total": run["progress"].get("stage2b", {}).get("total", 0)}
+        prog["stage2c"] = {"count": len(run.get("stage2c_responses") or []), "total": run["progress"].get("stage2c", {}).get("total", 1)}
+
     return {
         "active": True,
         "mode": "council",
         "stage": run["stage"],
         "execution_mode": run["execution_mode"],
-        "progress": {
-            "stage1": {"count": len(s1), "total": run["progress"]["stage1"]["total"]},
-            "stage2": {"count": len(s2), "total": run["progress"]["stage2"]["total"]},
-        },
+        "critique_mode": run.get("critique_mode", "freeform"),
+        "audit_profile": run.get("audit_profile", "general"),
+        "progress": prog,
         "stage1": s1 or None,
         "stage2": s2 or None,
+        "stage2a": run.get("stage2a_responses") or None,
+        "stage2b": run.get("stage2b_responses") or None,
+        "stage2c": run.get("stage2c_response") or None,
         "stage3": run.get("stage3_response"),
         "stage4": run.get("stage4_response"),
         "paused": run.get("paused", False),
@@ -1036,9 +1061,11 @@ async def send_debate_message_stream(conversation_id: str, body: SendMessageRequ
         final_aggregate_claim_verdicts = None
         final_stage4 = None
         cost_report = None
-        debate_critique_mode = "freeform"
+        settings = get_settings()
+        effective_critique_mode = body.critique_mode or settings.critique_mode or "freeform"
+        effective_audit_profile = body.audit_profile or settings.audit_profile or "general"
         debate_converged = False
-        _register_run(conversation_id, body.execution_mode)
+        _register_run(conversation_id, body.execution_mode, critique_mode=effective_critique_mode, audit_profile=effective_audit_profile)
         try:
             effective_content, attachments = _prepare_document_context(body.content, body.documents)
             storage.add_user_message(conversation_id, body.content, conversation=conversation, attachments=attachments)
@@ -1093,7 +1120,7 @@ async def send_debate_message_stream(conversation_id: str, body: SendMessageRequ
             effective_rounds = body.debate_rounds if body.debate_rounds is not None else settings.debate_rounds
             effective_rounds = min(max(effective_rounds, 1), MAX_DEBATE_ROUNDS)
 
-            if debate_critique_mode == "audit":
+            if effective_critique_mode == "audit":
                 from .audit_pipeline import run_audit_pipeline
                 generator = run_audit_pipeline(
                     effective_content, search_context, request, body.execution_mode,
@@ -1102,6 +1129,7 @@ async def send_debate_message_stream(conversation_id: str, body: SendMessageRequ
                     history=history,
                     debate_rounds=effective_rounds,
                     conversation_id=conversation_id,
+                    audit_profile=effective_audit_profile,
                 )
             else:
                 from .debate import run_iterative_debate
@@ -1112,6 +1140,7 @@ async def send_debate_message_stream(conversation_id: str, body: SendMessageRequ
                     history=history,
                     debate_rounds=effective_rounds,
                     conversation_id=conversation_id,
+                    critique_mode=effective_critique_mode,
                 )
 
             async for event in generator:
@@ -1140,13 +1169,19 @@ async def send_debate_message_stream(conversation_id: str, body: SendMessageRequ
                             responses.append(stage1_data)
                 elif event_type == "stage2_start" or event_type == "stage2a_start":
                     run_info["stage"] = "stage2" if event_type == "stage2_start" else "stage2a"
-                    run_info["progress"]["stage2"] = {"total": 0}
+                    run_info["progress"]["stage2"] = {"total": 0, "count": 0}
+                    if event_type == "stage2a_start":
+                        run_info["progress"]["stage2a"] = {"total": 0, "count": 0}
                 elif event_type == "stage2_init" or event_type == "stage2a_init":
                     run_info["progress"]["stage2"]["total"] = event.get("total", 0)
+                    if event_type == "stage2a_init":
+                        run_info["progress"]["stage2a"]["total"] = event.get("total", 0)
                 elif event_type in ["stage2_complete", "stage2_progress", "stage2a_complete", "stage2a_progress"]:
                     stage2_data = event.get("data")
                     if isinstance(stage2_data, list):
                         run_info["stage2_responses"] = stage2_data
+                        if event_type.startswith("stage2a"):
+                            run_info["stage2a_responses"] = stage2_data
                     elif isinstance(stage2_data, dict):
                         responses = run_info.setdefault("stage2_responses", [])
                         seen = run_info.setdefault("_seen_stage2", set())
@@ -1154,14 +1189,35 @@ async def send_debate_message_stream(conversation_id: str, body: SendMessageRequ
                         if model_id not in seen:
                             seen.add(model_id)
                             responses.append(stage2_data)
+
+                        if event_type.startswith("stage2a"):
+                            responses_2a = run_info.setdefault("stage2a_responses", [])
+                            seen_2a = run_info.setdefault("_seen_stage2a", set())
+                            if model_id not in seen_2a:
+                                seen_2a.add(model_id)
+                                responses_2a.append(stage2_data)
                 elif event_type == "stage2b_start":
                     run_info["stage"] = "stage2b"
-                elif event_type == "stage2b_progress" or event_type == "stage2b_complete":
-                    pass
+                    run_info["progress"]["stage2b"] = {"total": 0, "count": 0}
+                elif event_type == "stage2b_init":
+                    run_info["progress"]["stage2b"]["total"] = event.get("total", 0)
+                elif event_type in ["stage2b_complete", "stage2b_progress"]:
+                    stage2b_data = event.get("data")
+                    if isinstance(stage2b_data, list):
+                        run_info["stage2b_responses"] = stage2b_data
+                    elif isinstance(stage2b_data, dict):
+                        responses = run_info.setdefault("stage2b_responses", [])
+                        seen = run_info.setdefault("_seen_stage2b", set())
+                        model_id = stage2b_data.get("model")
+                        if model_id not in seen:
+                            seen.add(model_id)
+                            responses.append(stage2b_data)
                 elif event_type == "stage2c_start":
                     run_info["stage"] = "stage2c"
+                    run_info["progress"]["stage2c"] = {"total": 1, "count": 0}
                 elif event_type == "stage2c_complete":
-                    pass
+                    run_info["progress"]["stage2c"]["count"] = 1
+                    run_info["stage2c_response"] = event.get("data")
                 elif event_type == "stage3_start":
                     run_info["stage"] = "stage3"
                 elif event_type == "stage3_complete":
@@ -1208,6 +1264,27 @@ async def send_debate_message_stream(conversation_id: str, body: SendMessageRequ
                 "rounds": rounds_data,
                 "cost_report": cost_report or build_iterative_debate_cost_report(rounds_data, final_stage4),
             }
+            if debate_critique_mode == "audit":
+                metadata["audit_profile"] = effective_audit_profile
+                if rounds_data:
+                    last_round = rounds_data[-1]
+                    metadata["audit"] = {
+                        "schema_version": 1,
+                        "status": "complete",
+                        "stage2a": {
+                            "evaluations": last_round.get("stage2a_results") or [],
+                            "ranking": final_aggregate_rankings.get("ranking", []) if isinstance(final_aggregate_rankings, dict) else []
+                        },
+                        "claim_extraction": {
+                            "claims": final_canonical_claims or []
+                        },
+                        "stage2b": {
+                            "audits": last_round.get("stage2b_results") or []
+                        },
+                        "stage2c": {
+                            "correction_record": last_round.get("stage2c_result") or {}
+                        }
+                    }
             if body.execution_mode in ["chat_ranking", "full"]:
                 metadata["label_to_model"] = final_label_to_model
                 metadata["aggregate_rankings"] = final_aggregate_rankings
@@ -1531,6 +1608,139 @@ async def ask_oneshot(body: AskRequest):
         effective_content, attachments = _prepare_document_context(body.content, body.documents)
     except DocumentError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    effective_critique_mode = body.critique_mode or settings.critique_mode or "freeform"
+    effective_audit_profile = body.audit_profile or settings.audit_profile or "general"
+
+    if effective_critique_mode == "audit":
+        conversation_id = str(uuid.uuid4())
+        _register_run(conversation_id, body.execution_mode, critique_mode=effective_critique_mode, audit_profile=effective_audit_profile)
+        from .audit_pipeline import run_audit_pipeline
+        generator = run_audit_pipeline(
+            effective_content, search_context, request=None, execution_mode=body.execution_mode,
+            models_override=models, chairman_override=body.chairman_model,
+            debate_rounds=1, conversation_id=conversation_id,
+            audit_profile=effective_audit_profile
+        )
+
+        debate_complete_data = None
+        try:
+            async for event in generator:
+                if event.get("type") == "debate_complete":
+                    debate_complete_data = event
+        finally:
+            _active_runs.pop(conversation_id, None)
+
+        if not debate_complete_data:
+            raise HTTPException(status_code=500, detail="Audit pipeline completed without debate_complete event.")
+
+        rounds = debate_complete_data.get("rounds", [])
+        cost_report = debate_complete_data.get("cost_report")
+
+        stage1 = []
+        stage2a_responses = []
+        stage2b_responses = []
+        correction_record = None
+        stage3 = None
+        label_to_model = {}
+        aggregate_rankings = {}
+        canonical_claims = []
+        aggregate_claim_verdicts = {}
+
+        if rounds:
+            last_round = rounds[-1]
+            stage1 = last_round.get("stage1") or []
+            stage2a_responses = last_round.get("stage2a") or []
+            stage2b_responses = last_round.get("stage2b") or []
+            correction_record = last_round.get("stage2c")
+            stage3 = last_round.get("stage3")
+
+            last_meta = last_round.get("metadata") or {}
+            label_to_model = last_meta.get("label_to_model") or {}
+            aggregate_rankings = last_meta.get("aggregate_rankings") or {}
+            canonical_claims = last_meta.get("canonical_claims") or []
+            aggregate_claim_verdicts = last_meta.get("aggregate_claim_verdicts") or {}
+
+        stage2 = stage2a_responses
+
+        conversation = storage.create_conversation(conversation_id)
+        conversation["title"] = storage.derive_conversation_title(body.content)
+        storage.add_user_message(
+            conversation_id,
+            body.content,
+            conversation=conversation,
+            attachments=attachments,
+        )
+
+        metadata = {
+            "execution_mode": body.execution_mode,
+            "critique_mode": "audit",
+            "audit_profile": effective_audit_profile,
+            "cost_report": cost_report,
+            "audit": {
+                "schema_version": 1,
+                "status": "complete",
+                "stage2a": {
+                    "evaluations": stage2a_responses,
+                    "ranking": aggregate_rankings.get("ranking", []) if isinstance(aggregate_rankings, dict) else []
+                },
+                "claim_extraction": {
+                    "claims": canonical_claims or []
+                },
+                "stage2b": {
+                    "audits": stage2b_responses
+                },
+                "stage2c": {
+                    "correction_record": correction_record or {}
+                }
+            },
+            "canonical_claims": canonical_claims or [],
+            "aggregate_claim_verdicts": aggregate_claim_verdicts or {},
+            "label_to_model": label_to_model,
+            "aggregate_rankings": aggregate_rankings,
+        }
+
+        if search_context:
+            metadata["search_context"] = search_context
+            metadata["web_search"] = True
+        if search_query:
+            metadata["search_query"] = search_query
+
+        storage.add_assistant_message(
+            conversation_id,
+            stage1,
+            stage2 if body.execution_mode in ("chat_ranking", "full") else None,
+            stage3 if body.execution_mode == "full" else None,
+            metadata,
+            conversation=conversation,
+        )
+
+        if body.execution_mode == "chat_only":
+            return {
+                "conversation_id": conversation_id,
+                "responses": stage1,
+                "cost_report": cost_report,
+            }
+        elif body.execution_mode == "chat_ranking":
+            return {
+                "conversation_id": conversation_id,
+                "responses": stage1,
+                "rankings": stage2,
+                "aggregate_rankings": aggregate_rankings,
+                "label_to_model": label_to_model,
+                "cost_report": cost_report,
+            }
+        else:
+            return {
+                "conversation_id": conversation_id,
+                "response": stage3.get("response") if stage3 else None,
+                "chairman_model": stage3.get("model") if stage3 else None,
+                "responses": stage1,
+                "rankings": stage2,
+                "aggregate_rankings": aggregate_rankings,
+                "label_to_model": label_to_model,
+                "cost_report": cost_report,
+            }
 
     result = await _run_council_pipeline(
         effective_content, body.execution_mode, search_context,

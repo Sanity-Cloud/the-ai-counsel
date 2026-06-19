@@ -192,6 +192,7 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
 
   // Debate Settings
   const [critiqueMode, setCritiqueMode] = useState('freeform');
+  const [auditProfile, setAuditProfile] = useState('general');
   const [debateRounds, setDebateRounds] = useState(1);
   const [autoConverge, setAutoConverge] = useState(true);
   const [convergenceThreshold, setConvergenceThreshold] = useState(2);
@@ -253,6 +254,7 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
       chairmanFilter !== (settings.chairman_filter || 'remote') ||
       PROMPT_FIELDS.some((key) => prompts[key] !== settings[key]) ||
       critiqueMode !== (settings.critique_mode || 'freeform') ||
+      auditProfile !== (settings.audit_profile || 'general') ||
       debateRounds !== (settings.debate_rounds || 1) ||
       autoConverge !== (settings.auto_converge !== undefined ? settings.auto_converge : true) ||
       convergenceThreshold !== (settings.convergence_threshold || 2) ||
@@ -306,6 +308,7 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
           council_member_filters: councilMemberFilters,
           chairman_filter: chairmanFilter,
           critique_mode: critiqueMode,
+          audit_profile: auditProfile,
           debate_rounds: debateRounds,
           auto_converge: autoConverge,
           convergence_threshold: convergenceThreshold,
@@ -366,6 +369,7 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
     modelTimeoutSeconds,
     preflightTimeoutSeconds,
     claimExtractionTimeoutSeconds,
+    auditProfile,
   ]);
 
 
@@ -566,6 +570,7 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
 
       // Debate Settings
       setCritiqueMode(data.critique_mode || 'freeform');
+      setAuditProfile(data.audit_profile || 'general');
       setDebateRounds(data.debate_rounds || 1);
       setAutoConverge(data.auto_converge !== undefined ? data.auto_converge : true);
       setConvergenceThreshold(data.convergence_threshold || 2);
@@ -1094,6 +1099,7 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
 
       // Reset debate settings
       setCritiqueMode('freeform');
+      setAuditProfile('general');
       setDebateRounds(1);
       setAutoConverge(true);
       setConvergenceThreshold(2);
@@ -1138,6 +1144,7 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
         chairman_filter: 'remote',
         search_query_filter: 'remote',
         critique_mode: 'freeform',
+        audit_profile: 'general',
         debate_rounds: 1,
         auto_converge: true,
         convergence_threshold: 2,
@@ -1718,6 +1725,8 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
               <DebateSettings
                 critiqueMode={critiqueMode}
                 setCritiqueMode={setCritiqueMode}
+                auditProfile={auditProfile}
+                setAuditProfile={setAuditProfile}
                 debateRounds={debateRounds}
                 setDebateRounds={setDebateRounds}
                 autoConverge={autoConverge}

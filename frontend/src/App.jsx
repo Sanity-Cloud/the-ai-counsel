@@ -4,6 +4,7 @@ import { api, DEFAULT_EXECUTION_MODE, buildAvailableSearchProviders } from './ap
 import './App.css';
 import './components/StageCopyButtons.css';
 import './ModeToggle.css';
+import { auditEventReducer } from './state/auditEventReducer';
 
 const ChatInterface = lazy(() => import('./components/ChatInterface'));
 const Settings = lazy(() => import('./components/Settings'));
@@ -15,6 +16,9 @@ function finalizeTimers(timers = {}) {
   const next = { ...timers };
   if (next.stage1Start && !next.stage1End) next.stage1End = now;
   if (next.stage2Start && !next.stage2End) next.stage2End = now;
+  if (next.stage2aStart && !next.stage2aEnd) next.stage2aEnd = now;
+  if (next.stage2bStart && !next.stage2bEnd) next.stage2bEnd = now;
+  if (next.stage2cStart && !next.stage2cEnd) next.stage2cEnd = now;
   if (next.stage3Start && !next.stage3End) next.stage3End = now;
   if (next.stage4Start && !next.stage4End) next.stage4End = now;
   return next;
@@ -140,6 +144,7 @@ function App() {
   const [availableSearchProviders, setAvailableSearchProviders] = useState([{ id: 'duckduckgo', name: 'DuckDuckGo' }]);
   const [executionMode, setExecutionMode] = useState(DEFAULT_EXECUTION_MODE);
   const [critiqueMode, setCritiqueMode] = useState('freeform');
+  const [auditProfile, setAuditProfile] = useState('general');
   const [debateRounds, setDebateRounds] = useState(1);
   const [autoConverge, setAutoConverge] = useState(true);
   const [convergenceThreshold, setConvergenceThreshold] = useState(2);
@@ -208,6 +213,7 @@ function App() {
       setSearchProvider(settings.search_provider || 'duckduckgo');
 
       setCritiqueMode(settings.critique_mode || 'freeform');
+      setAuditProfile(settings.audit_profile || 'general');
       setDebateRounds(settings.debate_rounds || 1);
       setAutoConverge(settings.auto_converge !== undefined ? settings.auto_converge : true);
       setConvergenceThreshold(settings.convergence_threshold || 2);
@@ -282,6 +288,7 @@ function App() {
       setExecutionMode(settings.execution_mode || DEFAULT_EXECUTION_MODE);
 
       setCritiqueMode(settings.critique_mode || 'freeform');
+      setAuditProfile(settings.audit_profile || 'general');
       setDebateRounds(settings.debate_rounds || 1);
       setAutoConverge(settings.auto_converge !== undefined ? settings.auto_converge : true);
       setConvergenceThreshold(settings.convergence_threshold || 2);
@@ -486,7 +493,10 @@ function App() {
   const loadingFlagsFromStage = (stage) => ({
     search: stage === 'search',
     stage1: stage === 'stage1' || stage === 'initializing',
-    stage2: stage === 'stage2',
+    stage2: stage === 'stage2' || stage === 'stage2a' || stage === 'stage2b' || stage === 'stage2c',
+    stage2a: stage === 'stage2a',
+    stage2b: stage === 'stage2b',
+    stage2c: stage === 'stage2c',
     stage3: stage === 'stage3',
     stage4: stage === 'stage4',
   });
@@ -539,13 +549,20 @@ function App() {
             messages.push({
               role: 'assistant',
               stage1: progress.stage1 || null,
-              stage2: progress.stage2 || null,
+              stage2: progress.stage2a || progress.stage2 || null,
+              stage2a: progress.stage2a || null,
+              stage2b: progress.stage2b || null,
+              stage2c: progress.stage2c || null,
               stage3: progress.stage3 || null,
               loading: loadingFlagsFromStage(progress.stage),
               progress: progress.progress || {},
               metadata: {
                 execution_mode: progress.execution_mode,
                 stage4: progress.stage4 || null,
+                ...(progress.critique_mode === 'audit' ? {
+                  critique_mode: progress.critique_mode,
+                  audit_profile: progress.audit_profile,
+                } : {})
               },
               externalRun: true,
             });
@@ -580,17 +597,24 @@ function App() {
               if (!prev || prev.id !== conversationId) return prev;
               const messages = [...prev.messages];
               const lastIdx = messages.length - 1;
-              if (lastIdx >= 0 && messages[lastIdx]?.externalRun) {
+               if (lastIdx >= 0 && messages[lastIdx]?.externalRun) {
                 messages[lastIdx] = {
                   ...messages[lastIdx],
                   stage1: p.stage1 || messages[lastIdx].stage1,
-                  stage2: p.stage2 || messages[lastIdx].stage2,
+                  stage2: p.stage2a || p.stage2 || messages[lastIdx].stage2,
+                  stage2a: p.stage2a || messages[lastIdx].stage2a,
+                  stage2b: p.stage2b || messages[lastIdx].stage2b,
+                  stage2c: p.stage2c || messages[lastIdx].stage2c,
                   stage3: p.stage3 || messages[lastIdx].stage3,
                   loading: loadingFlagsFromStage(p.stage),
                   progress: p.progress || messages[lastIdx].progress,
                   metadata: {
                     ...messages[lastIdx].metadata,
                     stage4: p.stage4 || messages[lastIdx].metadata?.stage4,
+                    ...(p.critique_mode === 'audit' ? {
+                      critique_mode: p.critique_mode,
+                      audit_profile: p.audit_profile,
+                    } : {})
                   }
                 };
               }
@@ -1008,6 +1032,9 @@ function App() {
         role: 'assistant',
         stage1: null,
         stage2: null,
+        stage2a: null,
+        stage2b: null,
+        stage2c: null,
         stage3: null,
         metadata: null,
         loading: {
@@ -1016,6 +1043,9 @@ function App() {
           stage2: false,
           stage3: false,
           stage4: false,
+          stage2a: false,
+          stage2b: false,
+          stage2c: false,
         },
         timers: {
           stage1Start: null,
@@ -1026,10 +1056,18 @@ function App() {
           stage3End: null,
           stage4Start: null,
           stage4End: null,
+          stage2aStart: null,
+          stage2aEnd: null,
+          stage2bStart: null,
+          stage2bEnd: null,
+          stage2cStart: null,
+          stage2cEnd: null,
         },
         progress: {
           stage1: { count: 0, total: 0, currentModel: null },
-          stage2: { count: 0, total: 0, currentModel: null }
+          stage2: { count: 0, total: 0, currentModel: null },
+          stage2a: { count: 0, total: 0, currentModel: null },
+          stage2b: { count: 0, total: 0, currentModel: null }
         }
       };
 
@@ -1053,6 +1091,7 @@ function App() {
       if (isDebate) {
         streamOptions.debateRounds = debateRounds;
         streamOptions.critiqueMode = critiqueMode;
+        streamOptions.auditProfile = auditProfile;
         streamOptions.autoConverge = autoConverge;
         streamOptions.convergenceThreshold = convergenceThreshold;
       }
@@ -1204,104 +1243,26 @@ function App() {
               break;
 
             case 'stage2_start':
-              setCurrentConversation((prev) => {
-                const messages = [...prev.messages];
-                const lastMsg = messages[messages.length - 1];
-
-                const updatedLastMsg = {
-                  ...lastMsg,
-                  loading: {
-                    ...lastMsg.loading,
-                    stage2: true
-                  },
-                  timers: {
-                    ...lastMsg.timers,
-                    stage2Start: Date.now()
-                  }
-                };
-
-                messages[messages.length - 1] = updatedLastMsg;
-                return { ...prev, messages };
-              });
-              break;
-
+            case 'stage2a_start':
             case 'stage2_init':
-              setCurrentConversation((prev) => {
-                const messages = [...prev.messages];
-                const lastMsg = messages[messages.length - 1];
-                const initialStage2 = (councilModels || []).map(m => ({ model: m, pending: true }));
-
-                const updatedLastMsg = {
-                  ...lastMsg,
-                  progress: {
-                    ...lastMsg.progress,
-                    stage2: {
-                      count: 0,
-                      total: event.total,
-                      currentModel: null
-                    }
-                  },
-                  stage2: initialStage2
-                };
-
-                messages[messages.length - 1] = updatedLastMsg;
-                return { ...prev, messages };
-              });
-              break;
-
+            case 'stage2a_init':
             case 'stage2_progress':
-              setCurrentConversation((prev) => {
-                const messages = [...prev.messages];
-                const lastMsg = messages[messages.length - 1];
-
-                const updatedStage2 = lastMsg.stage2
-                  ? lastMsg.stage2.some(r => r.model === event.data.model)
-                    ? lastMsg.stage2.map(r => r.model === event.data.model ? event.data : r)
-                    : [...lastMsg.stage2, event.data]
-                  : [event.data];
-                const updatedLastMsg = {
-                  ...lastMsg,
-                  progress: {
-                    ...lastMsg.progress,
-                    stage2: {
-                      count: event.count,
-                      total: event.total,
-                      currentModel: event.data.model
-                    }
-                  },
-                  stage2: updatedStage2
-                };
-
-                messages[messages.length - 1] = updatedLastMsg;
-
-                return { ...prev, messages };
-              });
-              break;
-
+            case 'stage2a_progress':
             case 'stage2_complete':
+            case 'stage2a_complete':
+            case 'stage2b_start':
+            case 'stage2b_init':
+            case 'stage2b_progress':
+            case 'stage2b_complete':
+            case 'stage2c_start':
+            case 'stage2c_complete':
+            case 'stage2a_error':
+            case 'stage2b_error':
+            case 'stage2c_error':
               setCurrentConversation((prev) => {
                 const messages = [...prev.messages];
                 const lastMsg = messages[messages.length - 1];
-
-                // Immutable update to prevent React rendering issues
-                const updatedLastMsg = {
-                  ...lastMsg,
-                  stage2: event.data,
-                  loading: {
-                    ...lastMsg.loading,
-                    stage2: false
-                  },
-                  timers: {
-                    ...lastMsg.timers,
-                    stage2End: Date.now()
-                  },
-                  metadata: {
-                    ...lastMsg.metadata,
-                    ...event.metadata
-                  }
-                };
-
-                messages[messages.length - 1] = updatedLastMsg;
+                messages[messages.length - 1] = auditEventReducer(lastMsg, event, councilModels);
                 return { ...prev, messages };
               });
               break;

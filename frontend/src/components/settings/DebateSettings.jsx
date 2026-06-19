@@ -3,6 +3,8 @@ import React from 'react';
 export default function DebateSettings({
     critiqueMode,
     setCritiqueMode,
+    auditProfile,
+    setAuditProfile,
     debateRounds,
     setDebateRounds,
     autoConverge,
@@ -63,7 +65,7 @@ export default function DebateSettings({
 
                 <div className="debate-card-stack">
                     {/* Freeform Card */}
-                    <div 
+                    <div
                         className={`debate-mode-list-card ${critiqueMode === 'freeform' ? 'active' : ''}`}
                         onClick={() => setCritiqueMode('freeform')}
                     >
@@ -81,7 +83,7 @@ export default function DebateSettings({
                             </div>
                             <span className="debate-badge fastest">Fastest (1x cost)</span>
                         </div>
-                        
+
                         <div className="debate-card-details">
                             <ul className="debate-details-list">
                                 <li>
@@ -98,7 +100,7 @@ export default function DebateSettings({
                     </div>
 
                     {/* Paragraph-level Card */}
-                    <div 
+                    <div
                         className={`debate-mode-list-card ${critiqueMode === 'paragraph' ? 'active' : ''}`}
                         onClick={() => setCritiqueMode('paragraph')}
                     >
@@ -121,7 +123,7 @@ export default function DebateSettings({
                             </div>
                             <span className="debate-badge balanced">Balanced (1.1x cost)</span>
                         </div>
-                        
+
                         <div className="debate-card-details">
                             <ul className="debate-details-list">
                                 <li>
@@ -138,7 +140,7 @@ export default function DebateSettings({
                     </div>
 
                     {/* Claim-level Card */}
-                    <div 
+                    <div
                         className={`debate-mode-list-card ${critiqueMode === 'claim' ? 'active' : ''}`}
                         onClick={() => setCritiqueMode('claim')}
                     >
@@ -151,15 +153,18 @@ export default function DebateSettings({
                                     </svg>
                                 </span>
                                 <div className="debate-card-title-text">
-                                    <h5>Claim-level</h5>
+                                    <h5>Claim-level (Legacy)</h5>
                                     <p className="debate-card-concept">Factual assertion mapping</p>
                                 </div>
                             </div>
-                            <span className="debate-badge rigorous">Rigorous (1.5x cost)</span>
+                            <span className="debate-badge rigorous" style={{ backgroundColor: '#ef4444' }}>Deprecated (1.5x cost)</span>
                         </div>
-                        
+
                         <div className="debate-card-details">
                             <ul className="debate-details-list">
+                                <li style={{ color: '#f87171', fontWeight: '500' }}>
+                                    ⚠️ Deprecated: Use of claim-by-claim evaluation is deprecated. Recommend switching to Audit-level mode.
+                                </li>
                                 <li>
                                     <span className="bullet-label">Before review:</span> The Chairman runs an extra API call to extract factual claims from all responses into structured JSON. Reviewers verdict each claim as strong, weak, or neutral — not the whole response.
                                 </li>
@@ -172,53 +177,157 @@ export default function DebateSettings({
                             </ul>
                         </div>
                     </div>
+
+                    {/* Audit-level Card */}
+                    <div
+                        className={`debate-mode-list-card ${critiqueMode === 'audit' ? 'active' : ''}`}
+                        onClick={() => setCritiqueMode('audit')}
+                    >
+                        <div className="debate-card-header">
+                            <div className="debate-card-title-block">
+                                <span className="debate-card-icon-wrapper audit-icon">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                                        <path d="M9 11h6M9 15h4" />
+                                    </svg>
+                                </span>
+                                <div className="debate-card-title-text">
+                                    <h5>Audit-level (New)</h5>
+                                    <p className="debate-card-concept">Correction & factual verification pipeline</p>
+                                </div>
+                            </div>
+                            <span className="debate-badge rigorous">Audit (1.8x cost)</span>
+                        </div>
+
+                        <div className="debate-card-details">
+                            <ul className="debate-details-list">
+                                <li>
+                                    <span className="bullet-label">Overview:</span> Runs a single-pass 3-stage audit. Evaluates whole responses, extracts disputed claims, collects fact verdicts, and generates a correction record.
+                                </li>
+                                <li>
+                                    <span className="bullet-label">Audit Stages:</span> Stage 2A (holistic evaluation), Stage 2B (claim audit), and Stage 2C (adjudication & correction record consolidated by Chairman).
+                                </li>
+                                <li>
+                                    <span className="bullet-label">Best for:</span> Professional, regulatory, or legal review where factual grounding, standard of review, and remedy calibration are critical.
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
                 </div>
+
+                {/* Audit Profile Selector */}
+                {critiqueMode === 'audit' && (
+                    <div className="audit-profile-section animate-slide-down" style={{ marginTop: '24px' }}>
+                        <div className="debate-group-title">
+                            <h4>Audit Profile</h4>
+                            <span className="debate-helper-badge">Profile-Specific Prompts</span>
+                        </div>
+                        <div className="profile-segmented-bar" style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
+                            <button
+                                type="button"
+                                className={`profile-btn ${auditProfile === 'general' ? 'active' : ''}`}
+                                onClick={() => setAuditProfile('general')}
+                                style={{
+                                    flex: 1,
+                                    padding: '10px',
+                                    borderRadius: '6px',
+                                    border: auditProfile === 'general' ? '1px solid #06b6d4' : '1px solid rgba(255,255,255,0.1)',
+                                    background: auditProfile === 'general' ? 'rgba(6,182,212,0.1)' : 'transparent',
+                                    color: auditProfile === 'general' ? '#06b6d4' : '#94a3b8',
+                                    cursor: 'pointer',
+                                    fontWeight: '500',
+                                    transition: 'all 0.2s ease',
+                                }}
+                            >
+                                🌐 General Profile
+                            </button>
+                            <button
+                                type="button"
+                                className={`profile-btn ${auditProfile === 'legal' ? 'active' : ''}`}
+                                onClick={() => setAuditProfile('legal')}
+                                style={{
+                                    flex: 1,
+                                    padding: '10px',
+                                    borderRadius: '6px',
+                                    border: auditProfile === 'legal' ? '1px solid #06b6d4' : '1px solid rgba(255,255,255,0.1)',
+                                    background: auditProfile === 'legal' ? 'rgba(6,182,212,0.1)' : 'transparent',
+                                    color: auditProfile === 'legal' ? '#06b6d4' : '#94a3b8',
+                                    cursor: 'pointer',
+                                    fontWeight: '500',
+                                    transition: 'all 0.2s ease',
+                                }}
+                            >
+                                ⚖️ Legal Profile
+                            </button>
+                        </div>
+                        <p className="setting-hint" style={{ marginTop: '8px', fontSize: '13px', color: '#94a3b8' }}>
+                            {auditProfile === 'general'
+                                ? 'General: Focuses on general factuality, formatting compliance, coherence, and logical contradictions.'
+                                : 'Legal: Focuses on standard of review, record grounding, authority discipline, remedy calibration, and legal reasoning.'
+                            }
+                        </p>
+                    </div>
+                )}
 
                 {/* Number of Rounds */}
-                <div className="debate-rounds-section" style={{ marginTop: '32px' }}>
-                    <div className="debate-group-title">
-                        <h4>Number of Rounds</h4>
-                        <span className="debate-helper-badge">Deliberation Depth</span>
-                    </div>
-
-                    <div className="rounds-segmented-bar">
-                        {[1, 2, 3, 4, 5].map((n) => (
-                            <button
-                                key={n}
-                                type="button"
-                                className={`rounds-step-btn ${debateRounds === n ? 'active' : ''}`}
-                                onClick={() => setDebateRounds(n)}
-                            >
-                                <span className="rounds-step-number">{n}</span>
-                                <span className="rounds-step-label">
-                                    {n === 1 ? 'Single Pass' : `${n} Rounds`}
-                                </span>
-                            </button>
-                        ))}
-                    </div>
-
-                    {/* Deliberation & Cost Meter */}
-                    <div className="cost-meter-container">
-                        <div className="cost-meter-header">
-                            <span className="cost-meter-title">{meter.label}</span>
-                            <span className="cost-meter-percentage">{debateRounds === 1 ? 'Low Cost' : debateRounds <= 3 ? 'Balanced' : 'High Token Cost'}</span>
+                {critiqueMode === 'audit' ? (
+                    <div className="debate-rounds-section locked" style={{ marginTop: '32px', opacity: 0.8 }}>
+                        <div className="debate-group-title">
+                            <h4>Number of Rounds</h4>
+                            <span className="debate-helper-badge" style={{ backgroundColor: '#06b6d4', color: '#fff' }}>Locked</span>
                         </div>
-                        <div className="cost-meter-track">
-                            <div 
-                                className="cost-meter-fill animate-width" 
-                                style={{ 
-                                    width: meter.width, 
-                                    backgroundColor: meter.color,
-                                    boxShadow: `0 0 10px ${meter.color}40`
-                                }}
-                            />
+                        <div className="cost-meter-container" style={{ marginTop: '12px' }}>
+                            <p className="cost-meter-description" style={{ color: '#06b6d4', fontWeight: '500' }}>
+                                ℹ️ Audit mode operates as a single-pass protocol with exactly 1 round. Round and early-stopping controls are disabled.
+                            </p>
                         </div>
-                        <p className="cost-meter-description">{meter.desc}</p>
                     </div>
-                </div>
+                ) : (
+                    <div className="debate-rounds-section" style={{ marginTop: '32px' }}>
+                        <div className="debate-group-title">
+                            <h4>Number of Rounds</h4>
+                            <span className="debate-helper-badge">Deliberation Depth</span>
+                        </div>
+
+                        <div className="rounds-segmented-bar">
+                            {[1, 2, 3, 4, 5].map((n) => (
+                                <button
+                                    key={n}
+                                    type="button"
+                                    className={`rounds-step-btn ${debateRounds === n ? 'active' : ''}`}
+                                    onClick={() => setDebateRounds(n)}
+                                >
+                                    <span className="rounds-step-number">{n}</span>
+                                    <span className="rounds-step-label">
+                                        {n === 1 ? 'Single Pass' : `${n} Rounds`}
+                                    </span>
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* Deliberation & Cost Meter */}
+                        <div className="cost-meter-container">
+                            <div className="cost-meter-header">
+                                <span className="cost-meter-title">{meter.label}</span>
+                                <span className="cost-meter-percentage">{debateRounds === 1 ? 'Low Cost' : debateRounds <= 3 ? 'Balanced' : 'High Token Cost'}</span>
+                            </div>
+                            <div className="cost-meter-track">
+                                <div
+                                    className="cost-meter-fill animate-width"
+                                    style={{
+                                        width: meter.width,
+                                        backgroundColor: meter.color,
+                                        boxShadow: `0 0 10px ${meter.color}40`
+                                    }}
+                                />
+                            </div>
+                            <p className="cost-meter-description">{meter.desc}</p>
+                        </div>
+                    </div>
+                )}
 
                 {/* Warnings / Multi-round Drawer */}
-                {debateRounds > 1 ? (
+                {debateRounds > 1 && critiqueMode !== 'audit' ? (
                     <div className="convergence-drawer-container">
                         <div className="convergence-card">
                             <div

@@ -1,8 +1,24 @@
 import pytest
 import json
 import asyncio
-from backend.audit_pipeline import parse_stage2a_output, _parse_audit_verdicts
+import math
+from unittest.mock import patch, MagicMock, AsyncMock
+from backend.audit_pipeline import (
+    parse_stage2a_output,
+    _parse_audit_verdicts,
+    run_audit_pipeline,
+    normalize_and_deduplicate_claims,
+    stage2a_collect_evaluations,
+    stage2b_collect_audits,
+    stage2c_adjudicate,
+    extract_material_claims
+)
 from backend.council import EvaluationError
+
+
+# ==========================================
+# Legacy Parser Tests
+# ==========================================
 
 def test_parse_stage2a_output_valid():
     content = '''
@@ -40,12 +56,11 @@ def test_parse_stage2a_output_leakage():
 
 def test_parse_audit_verdicts_malformed():
     with pytest.raises(EvaluationError):
-        _parse_audit_verdicts("Not JSON")
+        _parse_audit_verdicts("Not JSON", [])
 
 def test_parse_audit_verdicts_349_claims_collapse():
-    # Simulate a degraded JSON where responses become boilerplate
     degraded_json = {
-        f"C{i:03d}": {
+        f"C-{i:03d}": {
             "source_support": "supported",
             "substantive_assessment": "sound",
             "reason": "." if i > 10 else "This is a properly long reason that should pass."
@@ -53,12 +68,11 @@ def test_parse_audit_verdicts_349_claims_collapse():
         for i in range(30)
     }
     with pytest.raises(EvaluationError, match="Degenerate reason"):
-        _parse_audit_verdicts(json.dumps(degraded_json))
+        _parse_audit_verdicts(json.dumps(degraded_json), [f"C-{i:03d}" for i in range(30)])
 
 def test_parse_audit_verdicts_repetitive_boilerplate():
-    # Simulate verdict collapse > 95%
     repetitive_json = {
-        f"C{i:03d}": {
+        f"C-{i:03d}": {
             "source_support": "supported",
             "substantive_assessment": "sound",
             "reason": "This is a properly long reason but repetitive."
@@ -66,4 +80,496 @@ def test_parse_audit_verdicts_repetitive_boilerplate():
         for i in range(20)
     }
     with pytest.raises(EvaluationError, match="Repetitive boilerplate"):
-        _parse_audit_verdicts(json.dumps(repetitive_json))
+        _parse_audit_verdicts(json.dumps(repetitive_json), [f"C-{i:03d}" for i in range(20)])
+
+
+# ==========================================
+# E2E Orchestration & Execution Mode Tests
+# ==========================================
+
+@pytest.fixture
+def mock_settings():
+    s = MagicMock()
+    s.debate_rounds = 1
+    s.critique_mode = "audit"
+    s.audit_profile = "general"
+    s.stage2_temperature = 0.3
+    s.stage3_temperature = 0.4
+    s.response_language = "English"
+    return s
+
+def make_async_gen(items):
+    async def gen(*args, **kwargs):
+        for item in items:
+            yield item
+    return gen
+
+@pytest.mark.asyncio
+async def test_run_audit_pipeline_full_e2e(mock_settings):
+    """Verify that run_audit_pipeline in 'full' mode runs all stages and dispatches correctly."""
+    stage1_items = [
+        2,
+        {"model": "model_a", "response": "Answer A", "error": None},
+        {"model": "model_b", "response": "Answer B", "error": None}
+    ]
+    stage2a_items = [
+        {"type": "stage2a_init", "total": 2, "round": 1},
+        {"type": "stage2a_progress", "data": {"model": "model_a", "parsed": {"ranking": ["Response B", "Response A"]}}, "count": 1, "total": 2, "round": 1},
+        {"type": "stage2a_progress", "data": {"model": "model_b", "parsed": {"ranking": ["Response B", "Response A"]}}, "count": 2, "total": 2, "round": 1},
+        {"type": "stage2a_complete", "data": [{"model": "model_a"}, {"model": "model_b"}], "label_to_model": {"A": "model_a", "B": "model_b"}, "round": 1}
+    ]
+    stage2b_items = [
+        {"type": "stage2b_init", "total": 2, "round": 1},
+        {"type": "stage2b_progress", "data": {"model": "model_a"}, "count": 1, "total": 2, "round": 1},
+        {"type": "stage2b_progress", "data": {"model": "model_b"}, "count": 2, "total": 2, "round": 1},
+        {"type": "stage2b_complete", "data": [], "label_to_model": {}, "round": 1}
+    ]
+
+    raw_claims = {"A": [{"id": "c1", "claim": "disposition is sound"}]}
+    stage2c_val = {"record": {"adopt": ["C-001"], "reject": [], "qualify": [], "authority_gaps": [], "record_gaps": [], "stage3_constraints": []}}
+
+    with patch("backend.audit_pipeline.get_settings", return_value=mock_settings), \
+         patch("backend.audit_pipeline.stage1_collect_responses", side_effect=make_async_gen(stage1_items)), \
+         patch("backend.audit_pipeline.stage2a_collect_evaluations", side_effect=make_async_gen(stage2a_items)), \
+         patch("backend.audit_pipeline.extract_material_claims", return_value={"claims": raw_claims, "model": "extractor"}), \
+         patch("backend.audit_pipeline.stage2b_collect_audits", side_effect=make_async_gen(stage2b_items)), \
+         patch("backend.audit_pipeline.stage2c_adjudicate", return_value=stage2c_val), \
+         patch("backend.audit_pipeline.query_model", return_value={"content": "Final Synthesis"}), \
+         patch("backend.audit_pipeline.get_council_models", return_value=["model_a", "model_b"]), \
+         patch("backend.audit_pipeline.get_chairman_model", return_value="chairman"):
+
+        events = []
+        async for event in run_audit_pipeline("Query?", execution_mode="full", conversation_id="test-conv"):
+            events.append(event)
+
+        event_types = [e["type"] for e in events]
+        assert "stage1_start" in event_types
+        assert "stage2a_start" in event_types
+        assert "stage2b_start" in event_types
+        assert "stage2c_start" in event_types
+        assert "stage3_start" in event_types
+        assert "stage3_complete" in event_types
+        assert "debate_complete" in event_types
+
+        complete_event = next(e for e in events if e["type"] == "debate_complete")
+        assert complete_event["critique_mode"] == "audit"
+        assert complete_event["debate_rounds_executed"] == 1
+        assert complete_event["convergence_status"] == "not_applicable"
+
+@pytest.mark.asyncio
+async def test_run_audit_pipeline_chat_only(mock_settings):
+    """Verify that run_audit_pipeline in 'chat_only' mode runs only Stage 1."""
+    stage1_items = [
+        2,
+        {"model": "model_a", "response": "Answer A", "error": None},
+        {"model": "model_b", "response": "Answer B", "error": None}
+    ]
+
+    with patch("backend.audit_pipeline.get_settings", return_value=mock_settings), \
+         patch("backend.audit_pipeline.stage1_collect_responses", side_effect=make_async_gen(stage1_items)), \
+         patch("backend.audit_pipeline.get_council_models", return_value=["model_a", "model_b"]):
+
+        events = []
+        async for event in run_audit_pipeline("Query?", execution_mode="chat_only", conversation_id="test-conv"):
+            events.append(event)
+
+        event_types = [e["type"] for e in events]
+        assert "stage1_start" in event_types
+        assert "stage1_progress" in event_types
+        assert "stage2a_start" not in event_types
+        assert "stage2b_start" not in event_types
+        assert "stage3_start" not in event_types
+        assert "debate_complete" in event_types
+
+@pytest.mark.asyncio
+async def test_run_audit_pipeline_chat_ranking(mock_settings):
+    """Verify that run_audit_pipeline in 'chat_ranking' runs Stages 1 and 2, but bypasses Stage 3."""
+    stage1_items = [
+        2,
+        {"model": "model_a", "response": "Answer A", "error": None},
+        {"model": "model_b", "response": "Answer B", "error": None}
+    ]
+    stage2a_items = [
+        {"type": "stage2a_init", "total": 2, "round": 1},
+        {"type": "stage2a_progress", "data": {"model": "model_a", "parsed": {"ranking": ["Response B", "Response A"]}}, "count": 1, "total": 2, "round": 1},
+        {"type": "stage2a_complete", "data": [{"model": "model_a"}], "label_to_model": {"A": "model_a", "B": "model_b"}, "round": 1}
+    ]
+    stage2b_items = [
+        {"type": "stage2b_init", "total": 2, "round": 1},
+        {"type": "stage2b_progress", "data": {"model": "model_a"}, "count": 1, "total": 2, "round": 1},
+        {"type": "stage2b_complete", "data": [], "label_to_model": {}, "round": 1}
+    ]
+
+    raw_claims = {"A": [{"id": "c1", "claim": "disposition is sound"}]}
+    stage2c_val = {"record": {"adopt": ["C-001"], "reject": [], "qualify": [], "authority_gaps": [], "record_gaps": [], "stage3_constraints": []}}
+
+    with patch("backend.audit_pipeline.get_settings", return_value=mock_settings), \
+         patch("backend.audit_pipeline.stage1_collect_responses", side_effect=make_async_gen(stage1_items)), \
+         patch("backend.audit_pipeline.stage2a_collect_evaluations", side_effect=make_async_gen(stage2a_items)), \
+         patch("backend.audit_pipeline.extract_material_claims", return_value={"claims": raw_claims, "model": "extractor"}), \
+         patch("backend.audit_pipeline.stage2b_collect_audits", side_effect=make_async_gen(stage2b_items)), \
+         patch("backend.audit_pipeline.stage2c_adjudicate", return_value=stage2c_val), \
+         patch("backend.audit_pipeline.get_council_models", return_value=["model_a", "model_b"]), \
+         patch("backend.audit_pipeline.get_chairman_model", return_value="chairman"):
+
+        events = []
+        async for event in run_audit_pipeline("Query?", execution_mode="chat_ranking", conversation_id="test-conv"):
+            events.append(event)
+
+        event_types = [e["type"] for e in events]
+        assert "stage1_start" in event_types
+        assert "stage2a_start" in event_types
+        assert "stage2b_start" in event_types
+        assert "stage2c_start" in event_types
+        assert "stage3_start" not in event_types
+        assert "debate_complete" in event_types
+
+
+# ==========================================
+# Provider Options & Token Limits Mapping
+# ==========================================
+
+class _FakeResponse:
+    def __init__(self, status_code=200, json_body=None):
+        self.status_code = status_code
+        self._json = json_body or {"choices": [{"message": {"content": "ok"}}]}
+        self.text = json.dumps(self._json)
+        self.headers = {"content-type": "application/json"}
+
+    def json(self):
+        return self._json
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise AssertionError(f"HTTP Status Error: {self.status_code}")
+
+    async def aread(self):
+        return self.text.encode("utf-8")
+
+    async def aiter_lines(self):
+        yield f"data: {json.dumps(self._json)}"
+        yield "data: [DONE]"
+
+class _FakeAsyncClient:
+    instances = []
+    responses = []
+
+    def __init__(self, *args, **kwargs):
+        self.kwargs = kwargs
+        type(self).instances.append(self)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    async def post(self, url, **kwargs):
+        self.kwargs["__url__"] = url
+        self.kwargs.update(kwargs)
+        if type(self).responses:
+            return type(self).responses.pop(0)
+        return _FakeResponse()
+
+    from contextlib import asynccontextmanager
+    @asynccontextmanager
+    async def stream(self, method, url, **kwargs):
+        self.kwargs["__url__"] = url
+        self.kwargs.update(kwargs)
+        resp = type(self).responses.pop(0) if type(self).responses else _FakeResponse()
+        yield resp
+
+@pytest.fixture
+def fake_httpx(monkeypatch):
+    _FakeAsyncClient.instances = []
+    _FakeAsyncClient.responses = []
+    import httpx
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)
+    return _FakeAsyncClient
+
+@pytest.mark.asyncio
+async def test_provider_token_limits_notion2api(fake_httpx, monkeypatch):
+    from backend.providers.notion2api import Notion2APIProvider
+    import backend.settings as settings_module
+    monkeypatch.setattr(settings_module, "get_settings", lambda: MagicMock(
+        notion2api_base_url="http://localhost:8120/v1",
+        notion2api_api_key="sk-test",
+        notion2api_firing_mode="rapid_fire"
+    ))
+
+    response_json = {"choices": [{"delta": {"content": "ok"}}]}
+    fake_httpx.responses.append(_FakeResponse(200, response_json))
+
+    provider = Notion2APIProvider()
+    await provider.query("notion2api:fable5", [{"role": "user", "content": "hi"}], max_output_tokens=1200)
+
+    body = fake_httpx.instances[-1].kwargs["json"]
+    assert body["max_tokens"] == 1200
+
+
+# ==========================================
+# Quorum & Validation Abort Tests
+# ==========================================
+
+@pytest.mark.asyncio
+async def test_stage2a_quorum_abort(mock_settings):
+    """Verify that if Stage 2A collects fewer than MIN_VALID_EVALUATORS successful results, it aborts with quorum error."""
+    stage1_results = [
+        {"model": "model_a", "response": "A", "error": None},
+        {"model": "model_b", "response": "B", "error": None}
+    ]
+
+    # Fake _query_model_gated that always returns failure for one evaluator
+    call_count = 0
+    async def fake_gated(model, *args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if model == "model_a":
+            return {"error": True, "error_message": "API Failure"}
+        else:
+            # Valid json representation
+            return {"content": '{"responses": {"Response A": {"score": 4}}, "ranking": ["Response B", "Response A"]}', "error": None}
+
+    with patch("backend.audit_pipeline._query_model_gated", side_effect=fake_gated):
+        events = []
+        async for event in stage2a_collect_evaluations(
+            "Query", "", stage1_results, "test-conv", mock_settings
+        ):
+            events.append(event)
+
+        event_types = [e["type"] for e in events]
+        assert "stage2a_error" in event_types
+        err_event = next(e for e in events if e["type"] == "stage2a_error")
+        assert err_event["status"] in ("failed_quorum", "invalid_evaluator_output")
+
+@pytest.mark.asyncio
+async def test_stage2b_validation_claim_ids(mock_settings):
+    """Verify that Stage 2B rejects and filters out unknown/extra claim IDs in evaluator responses."""
+    stage1_results = [
+        {"model": "model_a", "response": "A", "error": None},
+        {"model": "model_b", "response": "B", "error": None}
+    ]
+    canonical_claims = [
+        {"claim_id": "C-001", "canonical_text": "Claim 1"},
+        {"claim_id": "C-002", "canonical_text": "Claim 2"}
+    ]
+
+    # Evaluator returns verdicts containing an unknown claim ID: C-999
+    audit_output = """
+    {
+      "C-001": {"source_support": "supported", "substantive_assessment": "sound", "reason": "Valid claim 1 justification here."},
+      "C-002": {"source_support": "supported", "substantive_assessment": "sound", "reason": "Valid claim 2 justification here."},
+      "C-999": {"source_support": "unsupported", "substantive_assessment": "defect", "reason": "Unexpected claim ID."}
+    }
+    """
+
+    async def fake_gated(model, *args, **kwargs):
+        return {"content": audit_output, "error": None}
+
+    with patch("backend.audit_pipeline._query_model_gated", side_effect=fake_gated):
+        events = []
+        async for event in stage2b_collect_audits(
+            "Query", "", stage1_results, canonical_claims, "test-conv", mock_settings
+        ):
+            events.append(event)
+
+        progress_events = [e for e in events if e["type"] == "stage2b_progress"]
+        for p in progress_events:
+            # The parser should reject/raise, leading to model error since validation fails
+            assert p["data"].get("error") is True
+
+
+# ==========================================
+# Self-Evaluation Exclusion & Capping
+# ==========================================
+
+@pytest.mark.asyncio
+async def test_self_evaluation_exclusion_prompt(mock_settings):
+    """Verify that Stage 2A collect evaluations excludes the evaluator's own response from its prompt."""
+    stage1_results = [
+        {"model": "model_a", "response": "Response content A", "error": None},
+        {"model": "model_b", "response": "Response content B", "error": None},
+        {"model": "model_c", "response": "Response content C", "error": None},
+    ]
+
+    captured_prompts = {}
+    async def fake_gated(model, messages, **kwargs):
+        captured_prompts[model] = messages[0]["content"]
+        if model == "model_a":
+            res_labels = ["Response B", "Response C"]
+        elif model == "model_b":
+            res_labels = ["Response A", "Response C"]
+        else:
+            res_labels = ["Response A", "Response B"]
+
+        responses = {lbl: {"score": 4} for lbl in res_labels}
+        ranking = list(reversed(res_labels))
+        content = json.dumps({"responses": responses, "ranking": ranking})
+        return {"content": content, "error": None}
+
+    with patch("backend.audit_pipeline._query_model_gated", side_effect=fake_gated):
+        events = []
+        async for event in stage2a_collect_evaluations(
+            user_query="Query",
+            search_context="",
+            stage1_results=stage1_results,
+            conversation_id="test-conv",
+            settings=mock_settings,
+        ):
+            events.append(event)
+
+    # Assert successful Stage 2A completion and no errors
+    assert any(e["type"] == "stage2a_complete" for e in events)
+    assert not any(e["type"] == "stage2a_error" for e in events)
+
+    # Ensure model_a did not receive "Response content A" or "Response A" in responses_text
+    assert "model_a" in captured_prompts
+    assert "Response A:" not in captured_prompts["model_a"]
+    assert "Response content A" not in captured_prompts["model_a"]
+    assert "Response B:" in captured_prompts["model_a"]
+    assert "Response content B" in captured_prompts["model_a"]
+    assert "Response C:" in captured_prompts["model_a"]
+    assert "Response content C" in captured_prompts["model_a"]
+
+    # Same for model_b
+    assert "model_b" in captured_prompts
+    assert "Response B:" not in captured_prompts["model_b"]
+    assert "Response content B" not in captured_prompts["model_b"]
+    assert "Response A:" in captured_prompts["model_b"]
+    assert "Response content A" in captured_prompts["model_b"]
+
+def test_claim_deduplication_and_capping():
+    """Verify that normalize_and_deduplicate_claims caps the number of canonical claims strictly to 30 and is deterministic."""
+    raw_claims = {
+        "Response A": [
+            {"id": f"c{i}", "claim": f"Claim {i} standard of review disposition." if i % 5 == 0 else f"Low-priority claim {i}."}
+            for i in range(50)
+        ]
+    }
+
+    canonical_1 = normalize_and_deduplicate_claims(raw_claims)
+    assert len(canonical_1) <= 30
+
+    # Reorder input list to verify deterministic ordering of results
+    raw_claims_shuffled = {
+        "Response A": list(reversed(raw_claims["Response A"]))
+    }
+    canonical_2 = normalize_and_deduplicate_claims(raw_claims_shuffled)
+
+    assert [c["canonical_text"] for c in canonical_1] == [c["canonical_text"] for c in canonical_2]
+    assert [c["claim_id"] for c in canonical_1] == [c["claim_id"] for c in canonical_2]
+    assert "standard of review" in canonical_1[0]["canonical_text"].lower()
+
+
+
+# ==========================================
+# Client Disconnection Handling
+# ==========================================
+
+@pytest.mark.asyncio
+async def test_client_disconnection_cancellation(mock_settings):
+    """Verify that client disconnect check triggers asyncio task cancellation cleanly."""
+    stage1_results = [
+        {"model": "model_a", "response": "A", "error": None},
+        {"model": "model_b", "response": "B", "error": None}
+    ]
+
+    # Return true immediately on disconnect check
+    async def disconnect_check():
+        return True
+
+    # _query_model_gated that sleeps to simulate network latency
+    async def fake_gated(*args, **kwargs):
+        await asyncio.sleep(10)
+        return {"content": "Evaluated", "error": None}
+
+    with patch("backend.audit_pipeline._query_model_gated", side_effect=fake_gated):
+        events = []
+        try:
+            async for event in stage2a_collect_evaluations(
+                "Query", "", stage1_results, "test-conv", mock_settings, disconnect_check=disconnect_check
+            ):
+                events.append(event)
+        except asyncio.CancelledError:
+            pass
+
+        # Verify that execution was aborted
+        assert len(events) <= 2  # yields stage2a_init, then cancels when tasks are collected or as completed
+
+
+# ==========================================
+# Chairman Override Propagation
+# ==========================================
+
+@pytest.mark.asyncio
+async def test_chairman_override_propagation(mock_settings):
+    """Verify that the custom chairman override is propagated to Stage 3 synthesis."""
+    stage1_items = [
+        2,
+        {"model": "model_a", "response": "Answer A", "error": None},
+        {"model": "model_b", "response": "Answer B", "error": None}
+    ]
+    stage2a_items = [
+        {"type": "stage2a_init", "total": 2, "round": 1},
+        {"type": "stage2a_complete", "data": [{"model": "model_a"}], "label_to_model": {"A": "model_a", "B": "model_b"}, "round": 1}
+    ]
+    stage2b_items = [
+        {"type": "stage2b_init", "total": 2, "round": 1},
+        {"type": "stage2b_complete", "data": [], "label_to_model": {}, "round": 1}
+    ]
+    raw_claims = {"A": [{"id": "c1", "claim": "disposition is sound"}]}
+    stage2c_val = {"record": {"adopt": ["C-001"], "reject": [], "qualify": [], "authority_gaps": [], "record_gaps": [], "stage3_constraints": []}}
+
+    with patch("backend.audit_pipeline.get_settings", return_value=mock_settings), \
+         patch("backend.audit_pipeline.stage1_collect_responses", side_effect=make_async_gen(stage1_items)), \
+         patch("backend.audit_pipeline.stage2a_collect_evaluations", side_effect=make_async_gen(stage2a_items)), \
+         patch("backend.audit_pipeline.extract_material_claims", return_value={"claims": raw_claims, "model": "extractor"}), \
+         patch("backend.audit_pipeline.stage2b_collect_audits", side_effect=make_async_gen(stage2b_items)), \
+         patch("backend.audit_pipeline.stage2c_adjudicate", return_value=stage2c_val), \
+         patch("backend.audit_pipeline.query_model", return_value={"content": "Final Synthesis"}) as mock_query_model, \
+         patch("backend.audit_pipeline.get_council_models", return_value=["model_a", "model_b"]), \
+         patch("backend.audit_pipeline.get_chairman_model", return_value="chairman"):
+
+        events = []
+        async for event in run_audit_pipeline(
+            "Query?", execution_mode="full", chairman_override="custom_chairman", conversation_id="test-conv"
+        ):
+            events.append(event)
+
+        # Stage 3 query_model should be invoked with the overridden chairman model ID
+        mock_query_model.assert_called_once()
+        called_model = mock_query_model.call_args[0][0]
+        assert called_model == "custom_chairman"
+
+
+@pytest.mark.asyncio
+async def test_stage2b_success(mock_settings):
+    """Verify that Stage 2B collects successful audits and completes successfully."""
+    stage1_results = [
+        {"model": "model_a", "response": "A", "error": None},
+        {"model": "model_b", "response": "B", "error": None}
+    ]
+    canonical_claims = [
+        {"claim_id": "C-001", "canonical_text": "Claim 1"},
+        {"claim_id": "C-002", "canonical_text": "Claim 2"}
+    ]
+
+    audit_output = """
+    {
+      "C-001": {"source_support": "supported", "substantive_assessment": "sound", "reason": "Valid claim 1 justification here that is sufficiently long."},
+      "C-002": {"source_support": "supported", "substantive_assessment": "sound", "reason": "Valid claim 2 justification here that is sufficiently long."}
+    }
+    """
+
+    async def fake_gated(model, *args, **kwargs):
+        return {"content": audit_output, "error": None}
+
+    with patch("backend.audit_pipeline._query_model_gated", side_effect=fake_gated):
+        events = []
+        async for event in stage2b_collect_audits(
+            "Query", "", stage1_results, canonical_claims, "test-conv", mock_settings
+        ):
+            events.append(event)
+
+        assert any(e["type"] == "stage2b_complete" for e in events)
+        assert not any(e["type"] == "stage2b_error" for e in events)

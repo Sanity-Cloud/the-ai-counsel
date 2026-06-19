@@ -493,6 +493,14 @@ def add_assistant_message(
         message["stage3"] = stage3
     if metadata:
         message["metadata"] = metadata
+        if metadata.get("critique_mode") == "audit":
+            audit_data = metadata.get("audit") or {}
+            rounds_data = metadata.get("rounds") or []
+            last_round = rounds_data[-1] if rounds_data else {}
+            message["stage2a"] = audit_data.get("stage2a", {}).get("evaluations") or last_round.get("stage2a_results") or last_round.get("stage2") or []
+            message["stage2b"] = audit_data.get("stage2b", {}).get("audits") or last_round.get("stage2b_results") or []
+            message["stage2c"] = audit_data.get("stage2c", {}).get("correction_record") or last_round.get("stage2c_result") or {}
+            message["aggregate_claim_verdicts"] = metadata.get("aggregate_claim_verdicts") or {}
 
     conversation["messages"].append(message)
     save_conversation(conversation)

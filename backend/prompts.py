@@ -222,20 +222,62 @@ FINAL RANKING:
 
 # --- Phase 2: Audit Mode Prompts ---
 
-STAGE2_RESPONSE_EVALUATION_PROMPT = """You are evaluating responses to: {user_query}
+STAGE2A_GENERAL_PROMPT = """You are evaluating responses to: {user_query}
 
 {search_context_block}
 {responses_text}
 
-Evaluate each of the complete answers holistically using 6-8 dimensions:
+Evaluate each of the complete answers holistically using these dimensions:
+- Factuality (accuracy of statements)
+- Coherence and logical consistency
+- Formatting compliance (adherence to user request constraints)
+- Avoidance of logical contradictions
+- Overall reasoning quality
+- Completeness and clarity
+
+Provide ONE concise evaluation per response.
+After your evaluations, provide a ranked list of the responses.
+
+Respond with ONLY valid JSON:
+```json
+{{
+  "responses": {{
+    "Response A": {{
+      "instruction_compliance": 4,
+      "record_grounding": 3,
+      "authority_discipline": 4,
+      "reasoning_quality": 3,
+      "remedy_calibration": 2,
+      "completeness": 4,
+      "clarity": 4,
+      "material_defects": [
+        "Treats a disputed inference as established."
+      ],
+      "overall_assessment": "Useful but materially overstates the certainty."
+    }}
+  }},
+  "ranking": [
+    "Response C",
+    "Response A",
+    "Response B"
+  ]
+}}
+```"""
+
+STAGE2A_LEGAL_PROMPT = """You are evaluating responses to: {user_query}
+
+{search_context_block}
+{responses_text}
+
+Evaluate each of the complete answers holistically using these legal dimensions:
 - Instruction compliance
-- Record grounding
-- Authority discipline
-- Legal reasoning
-- Remedy calibration
+- Record grounding (evidence in the record)
+- Authority discipline (proper legal citations and cases)
+- Legal reasoning quality
+- Remedy calibration (appropriate relief/disposition)
 - Completeness
 - Preservation and standard-of-review treatment
-- Practical usefulness
+- Practical legal usefulness
 
 Provide ONE concise evaluation per response.
 After your evaluations, provide a ranked list of the responses.
@@ -266,6 +308,8 @@ Respond with ONLY valid JSON:
 }}
 ```"""
 
+STAGE2_RESPONSE_EVALUATION_PROMPT = STAGE2A_LEGAL_PROMPT  # Legacy alias
+
 MATERIAL_CLAIM_EXTRACTION_PROMPT = """Decompose each response into material, disputed claims.
 Extract NO MORE THAN 6-8 material claims from each response.
 A material claim involves:
@@ -282,7 +326,7 @@ Respond with ONLY valid JSON (no other text). Do NOT exceed 8 claims per respons
 }}
 ```"""
 
-STAGE2_CLAIM_AUDIT_PROMPT = """You are evaluating specific claims extracted from responses to: {user_query}
+STAGE2B_GENERAL_PROMPT = """You are evaluating specific claims extracted from responses to: {user_query}
 
 {search_context_block}
 {responses_text}
@@ -290,7 +334,7 @@ STAGE2_CLAIM_AUDIT_PROMPT = """You are evaluating specific claims extracted from
 These material claims have been extracted:
 {canonical_claims_text}
 
-A claim is NOT supported merely because it appears in a candidate response. Evaluate the claim itself against the supplied evidence and applicable reasoning.
+A claim is NOT supported merely because it appears in a candidate response. Evaluate the claim itself against the supplied evidence, factuality, coherence, and logical consistency.
 
 Rate each claim using these two axes:
 1. source_support: "supported", "partially_supported", "unsupported", "contradicted", "unverifiable"
@@ -309,13 +353,62 @@ Respond with ONLY valid JSON:
 }}
 ```"""
 
-STAGE2_CORRECTION_RECORD_PROMPT = """You are an independent adjudicator conducting a final review of a council deliberation.
+STAGE2B_LEGAL_PROMPT = """You are evaluating specific claims extracted from responses to: {user_query}
+
+{search_context_block}
+{responses_text}
+
+These material claims have been extracted:
+{canonical_claims_text}
+
+A claim is NOT supported merely because it appears in a candidate response. Evaluate the claim itself against the supplied record, standard of review, controlling authority, and legal reasoning.
+
+Rate each claim using these two axes:
+1. source_support: "supported", "partially_supported", "unsupported", "contradicted", "unverifiable"
+2. substantive_assessment: "sound", "requires_qualification", "unsound", "unverifiable"
+
+Respond with ONLY valid JSON:
+```json
+{{
+  "A1": {{
+    "source_support": "partially_supported",
+    "substantive_assessment": "requires_qualification",
+    "materiality": "high",
+    "reason": "explanation under 40 words",
+    "correction": "suggested correction or qualification"
+  }}
+}}
+```"""
+
+STAGE2_CLAIM_AUDIT_PROMPT = STAGE2B_LEGAL_PROMPT  # Legacy alias
+
+STAGE2C_GENERAL_PROMPT = """You are an independent adjudicator conducting a final review of a council deliberation.
 Your task is to produce a single, compact correction record.
 
 You are provided with aggregated claim audits from multiple evaluators:
 {aggregated_audits_text}
 
-Produce a compact correction record synthesizing these audits.
+Produce a compact correction record synthesizing these audits focused on factuality, coherence, and formatting.
+Output ONLY valid JSON:
+```json
+{{
+  "adopt": ["A1", "B2"],
+  "reject": ["A2"],
+  "qualify": ["B1"],
+  "authority_gaps": ["Missing citation for factual assertion"],
+  "record_gaps": ["No evidence of act described"],
+  "recommended_disposition": "Affirmed / Accepted",
+  "stage3_constraints": ["Must address the factual inconsistency"]
+}}
+```"""
+
+STAGE2C_LEGAL_PROMPT = """You are an independent adjudicator conducting a final review of a council deliberation.
+Your task is to produce a single, compact correction record.
+
+You are provided with aggregated claim audits from multiple evaluators:
+{aggregated_audits_text}
+
+Produce a compact correction record synthesizing these audits focused on standard of review, record grounding, and remedy calibration.
 Output ONLY valid JSON:
 ```json
 {{
@@ -328,6 +421,31 @@ Output ONLY valid JSON:
   "stage3_constraints": ["Must address the consent paradox"]
 }}
 ```"""
+
+STAGE2_CORRECTION_RECORD_PROMPT = STAGE2C_LEGAL_PROMPT  # Legacy alias
+
+STAGE3_AUDIT_PROMPT_DEFAULT = """You are the Chairman of an LLM Council. Multiple AI models have provided responses to a user's question. A multi-stage audit has been performed on these responses, including:
+1. Holistic evaluations and rankings of each response (Stage 2A).
+2. Deconstruction and verification of specific material claims (Stage 2B).
+3. Synthesis of an official correction record (Stage 2C).
+
+Original Question: {user_query}
+
+{search_context_block}
+STAGE 1 - Individual Responses:
+{responses_text}
+
+STAGE 2 - Peer Evaluations & Adjudication:
+{rankings_text}
+
+Your task as Chairman is to synthesize all of this information into a single, comprehensive, highly accurate final answer to the user's original question.
+Strictly adhere to the findings of the correction record (Stage 2C):
+- Adopt and integrate verified sound claims.
+- Exclude or reject identified false, unsupported, or contradicted claims.
+- Qualify claims that were determined to need qualification.
+- Address any noted authority gaps or record gaps.
+
+Provide a clear, well-reasoned final answer that represents the council's audited collective wisdom:"""
 
 
 

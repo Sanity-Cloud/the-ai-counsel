@@ -134,10 +134,9 @@ async def test_preflight_hard_fails_on_plain_503():
             "debug_timeline": [{"status": 503}]
         }
 
-        result = await preflight_models(["custom:unstable-model"], timeout=1.0)
+        result = await preflight_models(["openai:unstable-model"], timeout=1.0)
 
     assert result.ok is False
-    assert result.failures == [{"model": "custom:unstable-model", "error": "Service Unavailable"}]
+    assert result.failures == [{"model": "openai:unstable-model", "error": "Service Unavailable"}]
     assert result.rate_limited == []
     assert mock_query.call_count == 1
-

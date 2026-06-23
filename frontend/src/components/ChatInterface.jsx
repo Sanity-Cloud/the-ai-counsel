@@ -33,9 +33,6 @@ function shouldShowStage1CouncilGrid(msg) {
     return msg.loading?.stage1 || (hasStage1Results(msg) && !hasStage2Started(msg));
 }
 
-function shouldShowStage1Results(msg) {
-    return msg.loading?.stage1 || hasStage1Results(msg);
-}
 
 function getDeliberationScrollPhase(msg) {
     if (!msg || msg.role !== 'assistant') return 'idle';
@@ -46,18 +43,7 @@ function getDeliberationScrollPhase(msg) {
     return 'idle';
 }
 
-function renderStage1Content(msg) {
-    if (!shouldShowStage1Results(msg)) return null;
-    if (msg.loading?.stage1 && !hasStage1Results(msg)) return <Stage1Skeleton />;
-    if (!hasStage1Results(msg)) return null;
-    return (
-        <Stage1
-            responses={msg.stage1}
-            startTime={msg.timers?.stage1Start}
-            endTime={msg.timers?.stage1End}
-        />
-    );
-}
+
 
 function isCouncilTurnPending(msg, isActiveTurn, isLoading) {
     if (!isActiveTurn || !isLoading || msg.error || msg.aborted) return false;
@@ -510,14 +496,10 @@ function CouncilMessageRenderer({
         : (msg.metadata?.debate_rounds_configured || 1);
     const currentActiveRound = msg.metadata?.current_round || 1;
 
-    useEffect(() => {
-        if (!hasRounds) {
-            setSelectedRound(null);
-        }
-    }, [hasRounds]);
+    const safeSelectedRound = hasRounds ? selectedRound : null;
 
-    const activeRoundNum = selectedRound !== null
-        ? selectedRound
+    const activeRoundNum = safeSelectedRound !== null
+        ? safeSelectedRound
         : (hasRounds ? msg.metadata.rounds.length : currentActiveRound);
 
     let displayStage1 = msg.stage1;
@@ -534,8 +516,6 @@ function CouncilMessageRenderer({
     }
 
     const showStage1 = msg.loading?.stage1 || (Array.isArray(displayStage1) && displayStage1.length > 0);
-    const showStage2 = msg.loading?.stage2 || (Array.isArray(displayStage2) && displayStage2.length > 0);
-    const showStage3 = msg.loading?.stage3 || displayStage3;
     const showStage4 = msg.loading?.stage4 || displayMetadata.stage4;
 
     return (

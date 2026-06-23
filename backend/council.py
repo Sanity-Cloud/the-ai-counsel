@@ -1,6 +1,6 @@
 """3-stage LLM Council orchestration."""
 
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 import asyncio
 import logging
 import random
@@ -108,18 +108,7 @@ async def _query_model_gated(
     max_output_tokens: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Serialize Notion2API custom and direct calls with stagger and 503 backoff."""
-    lock = _notion_council_lock() if _is_notion2api_model(model) else None
-    if lock is None:
-        return await query_model(
-            model,
-            messages,
-            timeout=timeout,
-            temperature=temperature,
-            attachments=attachments,
-            conversation_id=conversation_id,
-            max_output_tokens=max_output_tokens,
-        )
-
+    lock = _notion_council_lock()
     messages = _vary_notion_thread_title(model, messages)
 
     async def _make_call():
@@ -246,7 +235,13 @@ async def query_model(
     attachments: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Dispatch query with serialization for Notion2API."""
-    if _is_notion2api_model(model):
+    try:
+        settings = get_settings()
+        firing_mode = settings.notion2api_firing_mode
+    except Exception:
+        firing_mode = "rapid_fire"
+
+    if _is_notion2api_model(model) and firing_mode == "random_delay":
         return await _query_model_gated(
             model,
             messages,
@@ -274,7 +269,6 @@ async def query_models_parallel(
 ) -> Dict[str, Any]:
     """Dispatch parallel query to appropriate providers."""
     tasks = []
-    model_to_task_map = {}
 
     # Group models by provider to optimize batching if supported (mostly for OpenRouter/Ollama legacy)
     # But for simplicity and modularity, we'll just spawn individual tasks for now
@@ -408,7 +402,7 @@ async def stage1_collect_responses(
         try:
             model_msgs = per_model_messages.get(m, messages) if per_model_messages else messages
             model_timeout = getattr(settings, "model_timeout_seconds", 300)
-            return m, await _query_model_gated(
+            return m, await query_model(
                 m,
                 model_msgs,
                 timeout=model_timeout,
@@ -460,7 +454,6 @@ async def stage1_collect_responses(
                     fail_safe_initial_wait_done = True
 
             # Try to spawn new tasks
-            spawned_any = False
             for m in list(pending_models):
                 if run_info and run_info.get("paused"):
                     break
@@ -473,7 +466,6 @@ async def stage1_collect_responses(
                         run_info["pending_providers"] = list(pending_models)
                         run_info["active_providers"].append(m)
                     active_tasks[m] = asyncio.create_task(_query_safe(m))
-                    spawned_any = True
                 else:
                     # Notion2API model: check concurrency and stagger
                     current_mode = run_info.get("continuation_mode", "normal") if run_info else "normal"
@@ -497,7 +489,7 @@ async def stage1_collect_responses(
                     elif current_mode == "fail_safe":
                         stagger_delay = random.uniform(5.0, 13.0)
                     else:
-                        if firing_mode in ("random_delay", "sequential"):
+                        if firing_mode == "random_delay":
                             stagger_delay = random.uniform(5.0, 13.0)
                         else:
                             stagger_delay = 0.0
@@ -512,7 +504,6 @@ async def stage1_collect_responses(
                         run_info["active_providers"].append(m)
                     active_tasks[m] = asyncio.create_task(_query_safe(m))
                     last_notion_fire_time = now
-                    spawned_any = True
 
             # Wait for any active tasks to complete
             if active_tasks:
@@ -682,7 +673,7 @@ async def stage2_collect_rankings(
     async def _query_safe(m: str):
         try:
             model_timeout = getattr(settings, "model_timeout_seconds", 300)
-            return m, await _query_model_gated(
+            return m, await query_model(
                 m,
                 messages,
                 timeout=model_timeout,
@@ -734,7 +725,6 @@ async def stage2_collect_rankings(
                     fail_safe_initial_wait_done = True
 
             # Try to spawn new tasks
-            spawned_any = False
             for m in list(pending_models):
                 if run_info and run_info.get("paused"):
                     break
@@ -747,7 +737,6 @@ async def stage2_collect_rankings(
                         run_info["pending_providers"] = list(pending_models)
                         run_info["active_providers"].append(m)
                     active_tasks[m] = asyncio.create_task(_query_safe(m))
-                    spawned_any = True
                 else:
                     # Notion2API model: check concurrency and stagger
                     current_mode = run_info.get("continuation_mode", "normal") if run_info else "normal"
@@ -771,7 +760,7 @@ async def stage2_collect_rankings(
                     elif current_mode == "fail_safe":
                         stagger_delay = random.uniform(5.0, 13.0)
                     else:
-                        if firing_mode in ("random_delay", "sequential"):
+                        if firing_mode == "random_delay":
                             stagger_delay = random.uniform(5.0, 13.0)
                         else:
                             stagger_delay = 0.0
@@ -786,7 +775,6 @@ async def stage2_collect_rankings(
                         run_info["active_providers"].append(m)
                     active_tasks[m] = asyncio.create_task(_query_safe(m))
                     last_notion_fire_time = now
-                    spawned_any = True
 
             # Wait for any active tasks to complete
             if active_tasks:
@@ -968,7 +956,7 @@ async def stage3_synthesize_final(
 
     try:
         model_timeout = getattr(settings, "model_timeout_seconds", 300)
-        response = await _query_model_gated(
+        response = await query_model(
             chairman_model,
             messages,
             timeout=model_timeout,

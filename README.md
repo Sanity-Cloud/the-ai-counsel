@@ -119,7 +119,7 @@ Council mode also supports **multi-round iterative debate** — models refine th
   ┌─────────────────────────────────┐
   │   STAGE 4: CORRECTED DRAFT      │
   │   Chairman synthesizes final    │
-  │   draft with [REVISED]/[NEW]    │
+  │   draft with corrections        │
   └─────────────────────────────────┘
 ```
 

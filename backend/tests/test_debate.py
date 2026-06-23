@@ -3,6 +3,7 @@ from backend.debate import (
     check_convergence, truncate_text,
     pre_segment_paragraphs, format_numbered_paragraphs,
     aggregate_claim_verdicts, select_top_claims_for_model,
+    format_claim_verdicts_for_prompt, format_contested_claims_for_stage4,
 )
 
 MAX_DEBATE_ROUNDS = 5
@@ -164,3 +165,37 @@ class TestCrossPollination:
 
         top = select_top_claims_for_model(canonical, verdicts, "model_a", label_to_model, max_claims=3)
         assert len(top) == 3
+
+
+class TestStage3ClaimMetadata:
+    def test_authoritative_count_and_all_claims_are_formatted(self):
+        canonical = {
+            "Response A": [{"id": "A1", "claim": "Claim one"}],
+            "Response B": [{"id": "B1", "claim": "Claim two"}],
+        }
+        aggregated = {
+            "A1": {"majority_verdict": "strong", "agreement": 1.0, "verdicts": {"strong": 4}},
+            "B1": {"majority_verdict": "flawed", "agreement": 0.75, "verdicts": {"flawed": 3, "strong": 1}},
+        }
+        text = format_claim_verdicts_for_prompt(canonical, aggregated)
+        assert "claims_evaluated: 2" in text
+        assert "A1" in text
+        assert "B1" in text
+        assert '"flawed": 3' in text
+
+    def test_stage4_context_excludes_strong_claims(self):
+        canonical = {
+            "Response A": [
+                {"id": "A1", "claim": "Keep this"},
+                {"id": "A2", "claim": "Fix this"},
+            ]
+        }
+        aggregated = {
+            "A1": {"majority_verdict": "strong", "agreement": 1.0, "verdicts": {"strong": 4}},
+            "A2": {"majority_verdict": "flawed", "agreement": 0.75, "verdicts": {"flawed": 3, "strong": 1}},
+        }
+        stage2 = [{"claim_verdicts": {"A2": {"reason": "The amount is unsupported."}}}]
+        text = format_contested_claims_for_stage4(canonical, aggregated, stage2)
+        assert "A2" in text
+        assert "The amount is unsupported." in text
+        assert "A1" not in text

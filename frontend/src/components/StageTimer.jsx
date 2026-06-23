@@ -4,13 +4,7 @@ export default function StageTimer({ startTime, endTime, label = "Elapsed" }) {
     const [elapsed, setElapsed] = useState(0);
 
     useEffect(() => {
-        if (!startTime) return;
-
-        if (endTime) {
-            // Final duration
-            setElapsed(endTime - startTime);
-            return;
-        }
+        if (!startTime || endTime) return;
 
         // Active timer
         const interval = setInterval(() => {
@@ -21,6 +15,8 @@ export default function StageTimer({ startTime, endTime, label = "Elapsed" }) {
     }, [startTime, endTime]);
 
     if (!startTime) return null;
+
+    const displayElapsed = endTime ? (endTime - startTime) : elapsed;
 
     const formatTime = (ms) => {
         const seconds = (ms / 1000).toFixed(1);
@@ -34,7 +30,7 @@ export default function StageTimer({ startTime, endTime, label = "Elapsed" }) {
             color: '#666',
             fontFamily: 'monospace'
         }}>
-            {label}: {formatTime(elapsed)}
+            {label}: {formatTime(displayElapsed)}
         </span>
     );
 }

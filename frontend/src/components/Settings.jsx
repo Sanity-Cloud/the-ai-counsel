@@ -6,8 +6,8 @@ import CouncilConfig from './settings/CouncilConfig';
 import SearchSettings from './settings/SearchSettings';
 import PromptSettings from './settings/PromptSettings';
 import DebateSettings from './settings/DebateSettings';
-import GeneralSettings, { RESPONSE_LANGUAGE_DEFAULT } from './settings/GeneralSettings';
-import { RESPONSE_LANGUAGES_FALLBACK } from '../constants/responseLanguages';
+import GeneralSettings from './settings/GeneralSettings';
+import { RESPONSE_LANGUAGE_DEFAULT, RESPONSE_LANGUAGES_FALLBACK } from '../constants/responseLanguages';
 import './Settings.css';
 
 const PROMPT_FIELDS = [
@@ -197,7 +197,6 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
   const [autoConverge, setAutoConverge] = useState(true);
   const [convergenceThreshold, setConvergenceThreshold] = useState(2);
 
-  const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [showFreeOnly, setShowFreeOnly] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -603,7 +602,6 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
   };
 
   const loadModels = async () => {
-    setIsLoadingModels(true);
     try {
       const data = await api.getModels();
       if (data.models && data.models.length > 0) {
@@ -624,8 +622,6 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
 
     } catch (err) {
       console.warn('Failed to load models:', err);
-    } finally {
-      setIsLoadingModels(false);
     }
   };
 
@@ -1477,7 +1473,7 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
     if (enabledProviders.notion2api) {
       const notionModels = directAvailableModels.filter(m =>
         m.source === 'notion2api'
-        || m.provider === 'Notion2API'
+        || m.provider?.toLowerCase() === 'notion2api'
         || String(m.id || '').startsWith('notion2api:')
       );
       models.push(...notionModels);

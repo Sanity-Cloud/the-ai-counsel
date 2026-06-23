@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { api, buildAvailableSearchProviders } from '../api';
 import SearchableModelSelect from './SearchableModelSelect';
-import { getShortModelName } from '../utils/modelHelpers';
+import { getShortModelName, deduplicateModels } from '../utils/modelHelpers';
 import DocumentUpload from './DocumentUpload';
 import './AdvisorSetup.css';
 
@@ -100,7 +100,7 @@ function filterDirectModelsForAdvisor(directModels, settings) {
     if (model.provider === 'Groq') {
       return settings.groq_api_key_set && (ep.groq !== false);
     }
-    if (model.provider === 'Notion2API' || model.source === 'notion2api' || String(model.id || '').startsWith('notion2api:')) {
+    if (model.provider?.toLowerCase() === 'notion2api' || model.source === 'notion2api' || String(model.id || '').startsWith('notion2api:')) {
       return settings.notion2api_api_key_set && (ep.notion2api !== false);
     }
     if (!ep.direct) return false;
@@ -214,10 +214,8 @@ export default function AdvisorSetup({
         ]);
 
         const combined = [...orModels, ...ollamaModels, ...directModels, ...customModels];
-        const unique = new Map();
-        combined.forEach(m => unique.set(m.id, m));
-        const sorted = Array.from(unique.values())
-          .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        const deduplicated = deduplicateModels(combined);
+        const sorted = deduplicated.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
         setModels(sorted);
 

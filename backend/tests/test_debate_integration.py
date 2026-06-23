@@ -18,6 +18,7 @@ def mock_settings():
     s.stage2_prompt = None
     s.stage3_prompt = None
     s.council_models = ["model_a", "model_b"]
+    s.stage4_prompt = ""
     return s
 
 

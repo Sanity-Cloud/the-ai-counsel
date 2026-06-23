@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { api } from '../api';
 import CouncilGrid from './CouncilGrid';
 import EditableCouncilGrid, { NEW_MEMBER_INDEX } from './EditableCouncilGrid';
+import { deduplicateModels } from '../utils/modelHelpers';
 import './CouncilSetup.css';
 
 const MAX_MEMBERS = 8;
@@ -30,7 +31,7 @@ function filterDirectModels(directModels, settings) {
     if (model.provider === 'Groq') {
       return settings.groq_api_key_set && (ep.groq !== false);
     }
-    if (model.provider === 'Notion2API' || model.source === 'notion2api' || String(model.id || '').startsWith('notion2api:')) {
+    if (model.provider?.toLowerCase() === 'notion2api' || model.source === 'notion2api' || String(model.id || '').startsWith('notion2api:')) {
       return settings.notion2api_api_key_set && (ep.notion2api !== false);
     }
     if (!ep.direct) return false;
@@ -175,9 +176,8 @@ export default function CouncilSetup({
         if (cancelled) return;
 
         const combined = [...orModels, ...ollamaModels, ...directModels, ...customModels];
-        const unique = new Map();
-        combined.forEach((m) => unique.set(m.id, m));
-        setModels(Array.from(unique.values()).sort((a, b) => (a.name || '').localeCompare(b.name || '')));
+        const deduplicated = deduplicateModels(combined);
+        setModels(deduplicated.sort((a, b) => (a.name || '').localeCompare(b.name || '')));
 
         const loadedPresets = Array.isArray(settings.council_presets) ? settings.council_presets : [];
         setPresets(loadedPresets);

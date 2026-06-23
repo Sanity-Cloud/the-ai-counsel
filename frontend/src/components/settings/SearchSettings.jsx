@@ -1,6 +1,6 @@
 import React from 'react';
 
-export const SEARCH_PROVIDERS = [
+const SEARCH_PROVIDERS = [
     {
         id: 'duckduckgo',
         name: 'DuckDuckGo',

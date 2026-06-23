@@ -30,13 +30,25 @@ function hexToRgb(hex) {
 export default function Stage2({ rankings, labelToModel, aggregateRankings, startTime, endTime, canonicalClaims, aggregateClaimVerdicts, onRetryProvider, onFireProvider }) {
     const [activeTab, setActiveTab] = useState(0);
     const [viewMode, setViewMode] = useState('leaderboard'); // 'leaderboard' or 'heatmap'
+    const [isCopied, setIsCopied] = useState(false);
 
     // Reset activeTab if it becomes out of bounds (e.g., during streaming)
     useEffect(() => {
         if (rankings && rankings.length > 0 && activeTab >= rankings.length) {
-            setActiveTab(rankings.length - 1);
+            const timer = setTimeout(() => {
+                setActiveTab(rankings.length - 1);
+            }, 0);
+            return () => clearTimeout(timer);
         }
     }, [rankings, activeTab]);
+
+    // Reset copy state when tab changes
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            setIsCopied(false);
+        }, 0);
+        return () => clearTimeout(timer);
+    }, [activeTab]);
 
     if (!rankings || rankings.length === 0) {
         return null;
@@ -58,14 +70,6 @@ export default function Stage2({ rankings, labelToModel, aggregateRankings, star
         : 'Response A, Response B, etc.';
 
     const isClaimMode = !!(canonicalClaims && aggregateClaimVerdicts);
-
-    // Copy functionality
-    const [isCopied, setIsCopied] = useState(false);
-
-    // Reset copy state when tab changes
-    useEffect(() => {
-        setIsCopied(false);
-    }, [activeTab]);
 
     const handleCopy = async () => {
         const ranking = currentRanking?.ranking;
@@ -308,7 +312,6 @@ export function Stage2Skeleton() {
 function RawEvaluationTabs({
     rankings,
     labelToModel,
-    activeTab,
     setActiveTab,
     currentRanking,
     currentVisuals,
@@ -316,7 +319,6 @@ function RawEvaluationTabs({
     isCopied,
     handleCopy,
     safeActiveTab,
-    anonymizedLabelText,
     parsedRanking,
     onRetryProvider,
     onFireProvider

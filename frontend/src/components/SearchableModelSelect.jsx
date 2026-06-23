@@ -22,11 +22,14 @@ export default function SearchableModelSelect({
     // Use source field if available, otherwise fallback to provider check
     const isOpenRouter = model.source === 'openrouter' || model.provider === 'OpenRouter';
     const isOllama = model.id?.startsWith('ollama:') || model.provider === 'Ollama';
+    const isNotion2Api = model.source === 'notion2api' || model.provider?.toLowerCase() === 'notion2api' || model.id?.startsWith('notion2api:');
 
     if (isOpenRouter) {
       groupLabel = 'OpenRouter (Cloud)';
     } else if (isOllama) {
       groupLabel = 'Local (Ollama)';
+    } else if (isNotion2Api) {
+      groupLabel = 'Notion2API (Direct)';
     } else {
       groupLabel = `${model.provider || 'Direct'} (Direct)`;
     }
@@ -46,6 +49,7 @@ export default function SearchableModelSelect({
   const providerOrder = [
     'OpenAI (Direct)', 'Anthropic (Direct)', 'Google (Direct)', 'Mistral (Direct)', 'DeepSeek (Direct)',
     'Groq (Direct)',
+    'Notion2API (Direct)',
     'OpenRouter (Cloud)',
     'Local (Ollama)'
   ];

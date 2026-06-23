@@ -435,8 +435,11 @@ Original Question: {user_query}
 STAGE 1 - Individual Responses:
 {responses_text}
 
-STAGE 2 - Peer Evaluations & Adjudication:
+STAGE 2A/2C - Peer Evaluations & Adjudication:
 {rankings_text}
+
+AUTHORITATIVE STAGE 2B CLAIM METADATA:
+{claim_audit_text}
 
 Your task as Chairman is to synthesize all of this information into a single, comprehensive, highly accurate final answer to the user's original question.
 Strictly adhere to the findings of the correction record (Stage 2C):
@@ -444,6 +447,7 @@ Strictly adhere to the findings of the correction record (Stage 2C):
 - Exclude or reject identified false, unsupported, or contradicted claims.
 - Qualify claims that were determined to need qualification.
 - Address any noted authority gaps or record gaps.
+- Treat the Stage 2B `claims_evaluated` value as the only authoritative claim count. Do not infer or recompute a different count.
 
 Provide a clear, well-reasoned final answer that represents the council's audited collective wisdom:"""
 
@@ -494,7 +498,10 @@ Original question: {user_query}
 
 {search_context_block}
 
-Claim evolution across rounds:
+AUTHORITATIVE FINAL-ROUND CLAIM COUNT: {actual_claim_count}
+Treat this number as authoritative. Do not infer, estimate, or report a different claim count.
+
+Claim evolution across the final round:
 {claim_evolution_summary}
 
 Final round responses:
@@ -505,21 +512,28 @@ Final round rankings:
 
 Deliver the definitive answer. Explain which claims survived scrutiny, which were dropped, and which were adopted across models. Declare the winner."""
 
-STAGE4_CORRECTED_DRAFT_PROMPT = """You are the Chairman of an LLM Council. After {total_rounds} rounds of deliberation, the council has produced a final verdict with specific claim corrections.
-
-Your task: produce a CORRECTED DRAFT of the original document that incorporates ALL corrections, fixes flawed claims, strengthens weak claims, and applies every recommendation from the verdict.
+STAGE4_CORRECTED_DRAFT_PROMPT = """You are producing a corrected draft after {total_rounds} round(s) of council deliberation.
 
 ORIGINAL DOCUMENT:
 {original_text}
 
-COUNCIL'S FINAL VERDICT (with claim corrections):
+COMPLETE STAGE 3 ADJUDICATION RECORD:
 {verdict_text}
 
-Instructions:
-- Rewrite the original document incorporating every correction identified in the verdict
-- Fix all claims marked FLAWED (replace with the corrected versions if provided)
-- Strengthen all claims marked WEAK with proper qualification or sourcing
-- Incorporate adopted improvements from the deliberation
-- Preserve the original document's structure, tone, and intent
-- Mark significant changes with [REVISED] or [NEW] inline so the author can see what changed
-- Do NOT add commentary or meta-discussion — produce only the corrected document"""
+CONTESTED, FLAWED, OR QUALIFIED CLAIMS AND REQUIRED CORRECTIONS:
+{corrections_text}
+
+REQUIRED ORIGINAL HEADINGS/SECTIONS:
+{required_headings}
+
+Produce the complete corrected document.
+
+Rules:
+- Preserve the original structure, section order, tone, purpose, and substantive detail.
+- Do not summarize, convert the document into an outline, collapse sections, or replace developed content with placeholders.
+- Retain every original heading and section unless the adjudication expressly requires changing that heading.
+- Apply only supported corrections. Do not invent facts, sources, corrections, or new placeholders.
+- Remove or accurately qualify claims found flawed, weak, unsupported, contradicted, unverifiable, or requiring qualification.
+- Do not include revision markers such as [REVISED] or [NEW].
+- Do not include greetings, introductions, conclusions about your process, provider identity, model identity, sign-offs, offers of further help, or any other meta-commentary.
+- Output only the corrected document itself."""

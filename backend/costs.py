@@ -220,7 +220,7 @@ def normalize_usage(raw_usage: Any, provider: str = "") -> Dict[str, Any]:
 
 
 def _is_zero_cost_model(model_id: str, provider: str) -> Tuple[bool, Optional[str]]:
-    normalized = model_id.lower()
+    model_id.lower()
     native_id = provider_model_id(model_id).lower()
 
     if provider == "ollama":

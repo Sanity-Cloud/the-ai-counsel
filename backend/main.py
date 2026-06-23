@@ -32,10 +32,10 @@ from .model_preflight import build_preflight_error_message, preflight_models
 from .search import perform_web_search, SearchProvider
 from .settings import get_settings, save_settings, update_settings, Settings, DEFAULT_COUNCIL_MODELS, DEFAULT_CHAIRMAN_MODEL, PROMPT_DEFAULTS, normalize_model_ids
 from .model_validation import requires_chairman, validate_council_lineup
-from .prompts import VALID_RESPONSE_LANGUAGES, RESPONSE_LANGUAGE_DEFAULT
+from .prompts import VALID_RESPONSE_LANGUAGES, RESPONSE_LANGUAGE_DEFAULT, apply_response_language
 from .personas import get_all_personas, save_persona_override, delete_persona_override, get_persona
 from .advisors import run_debate
-from .debate import run_iterative_debate, MAX_DEBATE_ROUNDS
+from .debate import MAX_DEBATE_ROUNDS
 from .documents import (
     DocumentError,
     DocumentLimits,

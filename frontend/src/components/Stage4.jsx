@@ -46,9 +46,15 @@ export default function Stage4({ correctedDraft, startTime, endTime }) {
             </div>
             <p className="stage-4-description">
                 The chairman has rewritten the original document incorporating all corrections,
-                fixing flawed claims, and applying recommendations from the deliberation.
-                Changes are marked with <strong>[REVISED]</strong> or <strong>[NEW]</strong>.
+                fixing flawed claims, and applying recommendations from the deliberation while fully
+                preserving the original structure and content.
             </p>
+            {correctedDraft?.error && (
+                <div className="stage-4-validation-error">
+                    <strong>⚠️ Preservation Validation Failed</strong>
+                    <p>{correctedDraft.error_message || "The draft failed structural or length validation. Showing the fallback draft below."}</p>
+                </div>
+            )}
             <div className="corrected-draft-response">
                 <div className="corrected-draft-header">
                     <div className="corrected-draft-identity">

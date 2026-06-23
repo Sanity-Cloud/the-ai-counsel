@@ -2,8 +2,6 @@ import React from 'react';
 import { formatDatePart } from '../../utils/dateFormat';
 import { RESPONSE_LANGUAGE_DEFAULT, RESPONSE_LANGUAGES_FALLBACK } from '../../constants/responseLanguages';
 
-export { RESPONSE_LANGUAGE_DEFAULT };
-
 export default function GeneralSettings({
   dateFormat,
   onDateFormatChange,

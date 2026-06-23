@@ -107,6 +107,8 @@ def test_sync_message_passes_effective_content_and_stores_attachment_metadata(tm
                     json={
                         "content": "Summarize.",
                         "execution_mode": "chat_only",
+                        "council_models": ["openai:gpt-4.1"],
+                        "chairman_model": "openai:gpt-4.1",
                         "documents": [{
                             "name": "notes.txt",
                             "mime_type": "text/plain",
@@ -200,6 +202,8 @@ def test_iterative_debate_passes_effective_content(tmp_path, monkeypatch):
                         json={
                             "content": "Debate this.",
                             "execution_mode": "chat_only",
+                            "council_models": ["openai:gpt-4.1"],
+                            "chairman_model": "openai:gpt-4.1",
                             "documents": [{
                                 "name": "notes.txt",
                                 "mime_type": "text/plain",

@@ -2,34 +2,29 @@
 import asyncio
 import logging
 import json
-import uuid
 import re
 import math
 from typing import Any, AsyncGenerator, Dict, List, Optional, Callable, Awaitable
 from collections import Counter
 
-from fastapi import Request
 from .settings import get_settings
 from .prompts import (
     apply_response_language,
-    STAGE2_RESPONSE_EVALUATION_PROMPT,
     MATERIAL_CLAIM_EXTRACTION_PROMPT,
-    STAGE2_CLAIM_AUDIT_PROMPT,
-    STAGE2_CORRECTION_RECORD_PROMPT,
-    STAGE3_PROMPT_DEFAULT,
     STAGE3_AUDIT_PROMPT_DEFAULT,
 )
-from .config import get_council_models, get_chairman_model
+from .config import get_chairman_model
 from .council import (
     stage1_collect_responses,
     build_stage_texts,
     EvaluationError,
     parse_stage2a_output,
     query_model,
-    _query_model_gated,
-    _is_notion2api_model
+    stage3_synthesize_final,
+    _query_model_gated
 )
 from .costs import build_iterative_debate_cost_report
+from .corrected_draft import generate_corrected_draft
 from .debate import _parse_audit_verdicts
 from .json_repair import extract_json_block
 
@@ -137,7 +132,7 @@ async def stage2a_collect_evaluations(
                 content = response.get("content", "")
 
                 # Strict parsing
-                expected_keys = [f"Response {l}" for l in valid_labels]
+                expected_keys = [f"Response {label}" for label in valid_labels]
                 try:
                     parsed = parse_stage2a_output(content, expected_keys)
                     attempts_ledger.append({
@@ -711,6 +706,128 @@ def aggregate_2b_results(stage2b_results: List[Dict[str, Any]], canonical_claims
     }
 
 
+def format_aggregate_verdicts_for_prompt(aggregated_2b: Dict[str, Any]) -> str:
+    """Format the canonical Stage 2B aggregate as authoritative Stage 3 context with compaction."""
+    claims = aggregated_2b.get("aggregated_claims") or []
+
+    contested_count = 0
+    strong_count = 0
+
+    contested_lines = []
+    strong_lines = []
+
+    for claim in claims:
+        support = claim.get("support_counts") or {}
+        assessment = claim.get("assessment_counts") or {}
+
+        is_contested = any(support.get(k, 0) > 0 for k in ("partially_supported", "unsupported", "contradicted", "unverifiable")) or \
+                       any(assessment.get(k, 0) > 0 for k in ("requires_qualification", "unsound", "unverifiable"))
+
+        claim_id = claim.get("claim_id", "unknown")
+        text = claim.get("canonical_text", "")
+
+        if is_contested:
+            contested_count += 1
+            contested_lines.append(
+                f'- {claim_id} | text="{text}" '
+                f'| support_counts={json.dumps(support, sort_keys=True)} '
+                f'| assessment_counts={json.dumps(assessment, sort_keys=True)}'
+            )
+        else:
+            strong_count += 1
+            strong_lines.append(
+                f'- {claim_id} | text="{text}" | status=strong (sound/supported)'
+            )
+
+    header_lines = [
+        f'audit_status: {aggregated_2b.get("audit_status", "unknown")}',
+        f'claims_evaluated: {aggregated_2b.get("claims_evaluated", len(claims))}',
+        f'valid_evaluators: {aggregated_2b.get("valid_evaluators", 0)}',
+        f'expected_evaluators: {aggregated_2b.get("expected_evaluators", 0)}',
+        f'total_contested_claims: {contested_count}',
+        f'total_strong_claims: {strong_count}',
+    ]
+
+    budget_chars = 20000
+    accumulated_chars = 0
+    kept_strong_lines = []
+    truncated_count = 0
+
+    for line in strong_lines:
+        if accumulated_chars + len(line) + 1 <= budget_chars:
+            kept_strong_lines.append(line)
+            accumulated_chars += len(line) + 1
+        else:
+            truncated_count += 1
+
+    if truncated_count > 0:
+        kept_strong_lines.append(
+            f'[TRUNCATION METADATA: {truncated_count} strong claims omitted due to prompt size budget]'
+        )
+
+    all_lines = header_lines + ["\nCONTESTED/FLAWED CLAIMS (FULL METADATA):"] + contested_lines
+    if kept_strong_lines:
+        all_lines += ["\nSTRONG/SOUND CLAIMS (COMPACT):"] + kept_strong_lines
+
+    return "\n".join(all_lines)
+
+
+def format_audit_corrections_for_stage4(
+    aggregated_2b: Dict[str, Any],
+    stage2b_results: List[Dict[str, Any]],
+    stage2c_result: Dict[str, Any],
+) -> str:
+    """Format only rejected/qualified/contested audit claims for Stage 4."""
+    record = stage2c_result.get("record") or {}
+    reject_ids = set(record.get("reject") or [])
+    qualify_ids = set(record.get("qualify") or [])
+    claim_lookup = {
+        claim.get("claim_id"): claim
+        for claim in (aggregated_2b.get("aggregated_claims") or [])
+    }
+    contested_ids = set()
+    for claim_id, claim in claim_lookup.items():
+        support_counts = claim.get("support_counts") or {}
+        assessment_counts = claim.get("assessment_counts") or {}
+        if any(support_counts.get(key, 0) for key in ("partially_supported", "unsupported", "contradicted", "unverifiable")):
+            contested_ids.add(claim_id)
+        if any(assessment_counts.get(key, 0) for key in ("requires_qualification", "unsound", "unverifiable")):
+            contested_ids.add(claim_id)
+
+    selected_ids = reject_ids | qualify_ids | contested_ids
+    lines = []
+    for claim_id in sorted(selected_ids):
+        claim = claim_lookup.get(claim_id, {})
+        disposition = (
+            "REJECT" if claim_id in reject_ids
+            else "QUALIFY" if claim_id in qualify_ids
+            else "CONTESTED"
+        )
+        lines.append(
+            f'- {claim_id} [{disposition}] "{claim.get("canonical_text", "")}"; '
+            f'support_counts={json.dumps(claim.get("support_counts", {}), sort_keys=True)}; '
+            f'assessment_counts={json.dumps(claim.get("assessment_counts", {}), sort_keys=True)}'
+        )
+        reasons = []
+        for result in stage2b_results:
+            detail = (result.get("claim_verdicts") or {}).get(claim_id) or {}
+            reason = str(detail.get("reason", "")).strip()
+            if reason and reason not in reasons:
+                reasons.append(reason)
+        for reason in reasons:
+            lines.append(f"  - Required correction basis: {reason}")
+
+    for label, values in (
+        ("Authority gap", record.get("authority_gaps") or []),
+        ("Record gap", record.get("record_gaps") or []),
+        ("Stage 3 constraint", record.get("stage3_constraints") or []),
+    ):
+        for value in values:
+            lines.append(f"- {label}: {value}")
+
+    return "\n".join(lines) if lines else "No rejected or qualified claims were identified."
+
+
 async def stage2c_adjudicate(
     aggregated_data: Dict[str, Any],
     conversation_id: str,
@@ -1048,10 +1165,12 @@ async def run_audit_pipeline(
             stage2c_text += "Not available.\n"
 
         stage1_text, _ = build_stage_texts(stage1_results, [])
+        claim_audit_text = format_aggregate_verdicts_for_prompt(aggregated_2b)
         synthesis_prompt = STAGE3_AUDIT_PROMPT_DEFAULT.format(
             user_query=user_query,
             responses_text=stage1_text,
             rankings_text=stage2a_text + "\n" + stage2c_text,
+            claim_audit_text=claim_audit_text,
             search_context_block=f"Context from Web Search:\n{search_context}\n" if search_context else ""
         )
         synthesis_prompt = apply_response_language(synthesis_prompt, settings.response_language)
@@ -1074,8 +1193,40 @@ async def run_audit_pipeline(
 
         yield {"type": "stage3_complete", "data": stage3_response}
 
-    # Build cost report
-    cost_report = None
+    # --- Stage 4 Corrected Draft ---
+    stage4_result = None
+    if (
+        execution_mode == "full"
+        and stage3_response
+        and not stage3_response.get("error")
+        and stage3_response.get("response")
+    ):
+        await check_disconnect()
+        yield {"type": "stage4_start"}
+        await asyncio.sleep(0.05)
+
+        from .prompts import STAGE4_CORRECTED_DRAFT_PROMPT
+
+        custom_stage4_prompt = getattr(settings, "stage4_prompt", "")
+        corrections_text = format_audit_corrections_for_stage4(
+            aggregated_2b,
+            stage2b_results,
+            stage2c_result,
+        )
+        stage4_result = await generate_corrected_draft(
+            synthesize_fn=stage3_synthesize_final,
+            default_template=STAGE4_CORRECTED_DRAFT_PROMPT,
+            custom_template=custom_stage4_prompt if isinstance(custom_stage4_prompt, str) else "",
+            total_rounds=1,
+            original_text=user_query,
+            verdict_text=stage3_response.get("response", ""),
+            corrections_text=corrections_text,
+            chairman_override=chairman_override,
+            conversation_id=conversation_id,
+            max_attempts=2,
+            minimum_word_ratio=0.70,
+        )
+        yield {"type": "stage4_complete", "data": stage4_result}
 
     rounds_data = [{
         "stage1": stage1_results,
@@ -1104,5 +1255,6 @@ async def run_audit_pipeline(
         "debate_rounds_executed": 1,
         "convergence_status": "not_applicable",
         "converged": False,
-        "cost_report": cost_report,
+        "stage4": stage4_result,
+        "cost_report": build_iterative_debate_cost_report(rounds_data, stage4_result),
     }

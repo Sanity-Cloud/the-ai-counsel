@@ -66,7 +66,7 @@ def client():
     from backend.settings import Settings
 
     with patch("backend.main.get_settings") as mock_get, \
-         patch("backend.main.save_settings") as mock_save, \
+         patch("backend.main.save_settings"), \
          patch("backend.main.update_settings") as mock_update:
         mock_get.return_value = Settings()
         mock_update.side_effect = lambda **kwargs: Settings(**{**Settings().model_dump(), **kwargs})

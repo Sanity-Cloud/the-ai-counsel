@@ -6,7 +6,7 @@ import os
 import random
 import time
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import httpx
 
@@ -59,6 +59,12 @@ class Notion2APICircuitBreaker:
     def force_fire(self, model_id: str) -> None:
         self._force_fire_models.add(model_id)
 
+    def reset(self) -> None:
+        """Reset circuit breaker state for testing."""
+        self._paused = False
+        self._pause_until = 0.0
+        self._force_fire_models.clear()
+
     def trigger_502_pause(self, model_id: str) -> None:
         """Trigger or extend the 30-second 502 pause."""
         now = time.monotonic()
@@ -77,11 +83,16 @@ class Notion2APICircuitBreaker:
         self._paused = True
         self._pause_until = new_until
 
-    async def wait_if_paused(self, model_id: str) -> None:
+    async def wait_if_paused(self, model_id: str, firing_mode: str = "sequential") -> None:
         """Wait for the 502 pause to expire, then take a sequential stagger slot."""
         if model_id in self._force_fire_models:
             self._force_fire_models.remove(model_id)
             logger.info("[Notion2API] Bypassing circuit breaker and stagger for %s (forced manually)", model_id)
+            return
+
+        was_paused = self._paused
+        # Only stagger if we were paused OR if we are explicitly in random_delay mode
+        if not was_paused and firing_mode != "random_delay":
             return
 
         # Wait for the pause window to expire
@@ -350,7 +361,7 @@ class Notion2APIProvider(LLMProvider):
         effective_timeout: float,
         firing_mode: str,
     ) -> Dict[str, Any]:
-        model = self._strip_prefix(model_id)
+        self._strip_prefix(model_id)
         last_response_text = ""
         last_status_code = 0
 
@@ -361,7 +372,7 @@ class Notion2APIProvider(LLMProvider):
             try:
                 # --- Firing mode gate ---
                 if firing_mode in ("random_delay", "sequential"):
-                    await _circuit_breaker.wait_if_paused(model_id)
+                    await _circuit_breaker.wait_if_paused(model_id, firing_mode)
                     if self._is_fable5_model(model_id):
                         await self._fable5_preflight_delay(model_id)
                 # --- End firing mode gate ---

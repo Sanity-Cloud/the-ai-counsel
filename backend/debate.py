@@ -2,6 +2,7 @@
 
 import math
 import asyncio
+import json
 import logging
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
@@ -16,6 +17,7 @@ from .council import (
     build_stage_texts,
 )
 from .costs import build_iterative_debate_cost_report
+from .corrected_draft import generate_corrected_draft
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +179,120 @@ def aggregate_claim_verdicts(
         }
 
     return aggregated
+
+
+def format_claim_verdicts_for_prompt(
+    canonical_claims: Optional[Dict[str, List[Dict[str, str]]]],
+    aggregated_verdicts: Optional[Dict[str, Dict[str, Any]]],
+) -> str:
+    """Format the final round's complete canonical claim aggregate for Stage 3 with compaction."""
+    canonical_claims = canonical_claims or {}
+    aggregated_verdicts = aggregated_verdicts or {}
+
+    contested_count = 0
+    strong_count = 0
+
+    contested_lines = []
+    strong_lines = []
+
+    seen_claim_ids = set()
+
+    for response_label, claims in canonical_claims.items():
+        for claim in claims:
+            claim_id = claim.get("id", "unknown")
+            if claim_id in seen_claim_ids:
+                continue
+            seen_claim_ids.add(claim_id)
+
+            verdict = aggregated_verdicts.get(claim_id, {})
+            majority = str(verdict.get("majority_verdict", "")).lower()
+
+            is_contested = majority in ("partially_supported", "unsupported", "contradicted", "unverifiable", "requires_qualification", "unsound") or \
+                           float(verdict.get("agreement", 1.0)) < 0.9
+
+            text = claim.get("claim", "")
+            if is_contested:
+                contested_count += 1
+                contested_lines.append(
+                    f'- {claim_id} | source={response_label} | text="{text}" '
+                    f'| majority={verdict.get("majority_verdict", "unknown")} '
+                    f'| agreement={verdict.get("agreement", 0)} '
+                    f'| counts={json.dumps(verdict.get("verdicts", {}), sort_keys=True)}'
+                )
+            else:
+                strong_count += 1
+                strong_lines.append(
+                    f'- {claim_id} | source={response_label} | text="{text}" | status=strong (sound/supported)'
+                )
+
+    authoritative_count = len(aggregated_verdicts) if aggregated_verdicts else len(seen_claim_ids)
+    header_lines = [
+        f'claims_evaluated: {authoritative_count}',
+        f'total_contested_claims: {contested_count}',
+        f'total_strong_claims: {strong_count}',
+    ]
+
+    budget_chars = 20000
+    accumulated_chars = 0
+    kept_strong_lines = []
+    truncated_count = 0
+
+    for line in strong_lines:
+        if accumulated_chars + len(line) + 1 <= budget_chars:
+            kept_strong_lines.append(line)
+            accumulated_chars += len(line) + 1
+        else:
+            truncated_count += 1
+
+    if truncated_count > 0:
+        kept_strong_lines.append(
+            f'[TRUNCATION METADATA: {truncated_count} strong claims omitted due to prompt size budget]'
+        )
+
+    all_lines = header_lines
+    if contested_lines:
+        all_lines += ["\nCONTESTED/FLAWED CLAIMS (FULL METADATA):"] + contested_lines
+    if kept_strong_lines:
+        all_lines += ["\nSTRONG/SOUND CLAIMS (COMPACT):"] + kept_strong_lines
+
+    return "\n".join(all_lines)
+
+
+def format_contested_claims_for_stage4(
+    canonical_claims: Optional[Dict[str, List[Dict[str, str]]]],
+    aggregated_verdicts: Optional[Dict[str, Dict[str, Any]]],
+    stage2_results: Optional[List[Dict[str, Any]]] = None,
+) -> str:
+    """Format only weak/flawed claims and evaluator reasons for Stage 4."""
+    canonical_claims = canonical_claims or {}
+    aggregated_verdicts = aggregated_verdicts or {}
+    stage2_results = stage2_results or []
+    claim_lookup = {
+        claim.get("id"): claim.get("claim", "")
+        for claims in canonical_claims.values()
+        for claim in claims
+    }
+
+    lines = []
+    for claim_id, aggregate in aggregated_verdicts.items():
+        majority = str(aggregate.get("majority_verdict", "")).lower()
+        if majority not in {"weak", "flawed"}:
+            continue
+        reasons = []
+        for result in stage2_results:
+            detail = (result.get("claim_verdicts") or {}).get(claim_id) or {}
+            reason = str(detail.get("reason", "")).strip()
+            if reason and reason not in reasons:
+                reasons.append(reason)
+        lines.append(
+            f'- {claim_id} [{majority.upper()}] "{claim_lookup.get(claim_id, "")}"; '
+            f'agreement={aggregate.get("agreement", 0)}; '
+            f'counts={json.dumps(aggregate.get("verdicts", {}), sort_keys=True)}'
+        )
+        for reason in reasons:
+            lines.append(f"  - Required correction basis: {reason}")
+
+    return "\n".join(lines) if lines else "No weak or flawed canonical claims were identified."
 
 
 def select_top_claims_for_model(
@@ -626,7 +742,7 @@ async def run_iterative_debate(
             # Build label_to_model for mode-specific prompt building
             successful_results = [r for r in stage1_results if not r.get("error")]
             labels = [chr(65 + i) for i in range(len(successful_results))]
-            label_to_model_preview = {
+            {
                 f"Response {label}": result["model"]
                 for label, result in zip(labels, successful_results)
             }
@@ -778,7 +894,7 @@ async def run_iterative_debate(
 
             # Build final chairman prompt for last round
             prompt_override = None
-            if is_final and round_num > 1:
+            if is_final:
                 search_block = ""
                 if search_context:
                     search_block = f"Context from Web Search:\n{search_context}\n"
@@ -788,20 +904,20 @@ async def run_iterative_debate(
                 if effective_mode == "claim" and canonical_claims:
                     from .prompts import STAGE3_FINAL_CLAIM_PROMPT
 
-                    # Build claim evolution summary
-                    evolution_lines = []
-                    for label, claims in canonical_claims.items():
-                        for claim in claims:
-                            cid = claim["id"]
-                            vi = (aggregated_verdicts or {}).get(cid, {})
-                            verdict = vi.get("majority_verdict", "unknown").upper()
-                            evolution_lines.append(f'- {cid} "{claim["claim"]}": {verdict}')
-                    claim_evolution = "\n".join(evolution_lines) or "No claim data available."
-
+                    authoritative_claim_count = (
+                        len(aggregated_verdicts)
+                        if aggregated_verdicts
+                        else sum(len(claims) for claims in canonical_claims.values())
+                    )
+                    claim_evolution = format_claim_verdicts_for_prompt(
+                        canonical_claims,
+                        aggregated_verdicts,
+                    )
                     prompt_override = STAGE3_FINAL_CLAIM_PROMPT.format(
                         total_rounds=round_num,
                         user_query=user_query,
                         search_context_block=search_block,
+                        actual_claim_count=authoritative_claim_count,
                         claim_evolution_summary=claim_evolution,
                         stage1_text=stage1_text,
                         stage2_text=stage2_text,
@@ -863,7 +979,7 @@ async def run_iterative_debate(
     # --- Stage 4: Corrected Draft (after all rounds, if full mode) ---
     stage4_result: Optional[Dict[str, Any]] = None
 
-    if execution_mode == "full" and previous_synthesis and num_rounds > 1:
+    if execution_mode == "full" and previous_synthesis:
         if request and await request.is_disconnected():
             raise asyncio.CancelledError("Client disconnected")
 
@@ -872,25 +988,24 @@ async def run_iterative_debate(
 
         from .prompts import STAGE4_CORRECTED_DRAFT_PROMPT
 
-        stage4_template = settings.stage4_prompt.strip() or STAGE4_CORRECTED_DRAFT_PROMPT
-        try:
-            stage4_prompt = stage4_template.format(
-                total_rounds=len(all_rounds_data),
-                original_text=truncate_text(user_query, 12000),
-                verdict_text=truncate_text(previous_synthesis, 10000),
-            )
-        except (KeyError, IndexError, ValueError):
-            stage4_prompt = STAGE4_CORRECTED_DRAFT_PROMPT.format(
-                total_rounds=len(all_rounds_data),
-                original_text=truncate_text(user_query, 12000),
-                verdict_text=truncate_text(previous_synthesis, 10000),
-            )
-
-        stage4_result = await stage3_synthesize_final(
-            user_query, [], [], "",
+        custom_stage4_prompt = getattr(settings, "stage4_prompt", "")
+        corrections_text = format_contested_claims_for_stage4(
+            previous_canonical_claims,
+            previous_aggregated_verdicts,
+            previous_stage2_results,
+        )
+        stage4_result = await generate_corrected_draft(
+            synthesize_fn=stage3_synthesize_final,
+            default_template=STAGE4_CORRECTED_DRAFT_PROMPT,
+            custom_template=custom_stage4_prompt if isinstance(custom_stage4_prompt, str) else "",
+            total_rounds=len(all_rounds_data),
+            original_text=user_query,
+            verdict_text=previous_synthesis,
+            corrections_text=corrections_text,
             chairman_override=chairman_override,
-            prompt_override=stage4_prompt,
             conversation_id=conversation_id,
+            max_attempts=2,
+            minimum_word_ratio=0.70,
         )
         yield {"type": "stage4_complete", "data": stage4_result}
 

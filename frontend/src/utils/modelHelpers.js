@@ -133,3 +133,27 @@ export const getShortModelName = (modelId) => {
 
   return titleCaseWords(formatVersionSuffix(rawName.replace(/[-_]+/g, ' ')));
 };
+
+export function deduplicateModels(modelsList) {
+  if (!Array.isArray(modelsList)) return [];
+  const map = new Map();
+  const getPriority = (modelId) => {
+    if (!modelId) return 0;
+    const id = modelId.toLowerCase();
+    if (id.startsWith('custom:')) return 1;
+    if (id.startsWith('openrouter:') || id.includes('/')) return 2;
+    if (id.startsWith('ollama:')) return 3;
+    return 4; // Direct connections have highest priority
+  };
+
+  for (const m of modelsList) {
+    if (!m) continue;
+    const key = m.name || m.id;
+    const existing = map.get(key);
+    if (!existing || getPriority(m.id) > getPriority(existing.id)) {
+      map.set(key, m);
+    }
+  }
+
+  return Array.from(map.values());
+}

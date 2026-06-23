@@ -153,7 +153,7 @@ function App() {
   const [appMode, setAppMode] = useState(null); // null shows landing page
   const [runPaused, setRunPaused] = useState(false);
   const [pausedModel, setPausedModel] = useState(null);
-  const [pausedStage, setPausedStage] = useState(null);
+  const [pausedStage, setPausedStage] = useState(null); // eslint-disable-line no-unused-vars
   const [pendingCount, setPendingCount] = useState(0);
   const [activeProviders, setActiveProviders] = useState([]);
   const [pendingProviders, setPendingProviders] = useState([]);
@@ -701,7 +701,7 @@ function App() {
 
   const handleStartDebate = async (options) => {
     stopProgressPolling();
-    const currentRequestId = ++requestIdRef.current;
+    ++requestIdRef.current;
 
     setIsLoading(true);
     let activeConversationId = currentConversationId;

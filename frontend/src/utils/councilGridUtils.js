@@ -9,6 +9,7 @@ import openrouterLogo from '../assets/icons/openrouter.svg';
 import nvidiaLogo from '../assets/icons/nvidia.svg';
 import customLogo from '../assets/icons/openai-compatible.svg';
 import opencodeLogo from '../assets/icons/opencode.svg';
+import notion2apiLogo from '../assets/icons/notion2api.svg';
 
 export const PROVIDER_CONFIG = {
   openai: { color: '#10a37f', label: 'OpenAI', logo: openaiLogo },
@@ -23,10 +24,12 @@ export const PROVIDER_CONFIG = {
   custom: { color: '#06b6d4', label: 'Custom', logo: customLogo },
   'opencode-zen': { color: '#211E1E', label: 'OpenCode Zen', logo: opencodeLogo },
   'opencode-go': { color: '#211E1E', label: 'OpenCode Go', logo: opencodeLogo },
+  notion2api: { color: '#0ea5e9', label: 'Notion2API', logo: notion2apiLogo },
   default: { color: '#888888', label: 'Model', logo: null, icon: '🤖' },
 };
 
 const PROVIDER_PREFIXES = [
+  ['notion2api:', 'notion2api'],
   ['opencode-zen:', 'opencode-zen'],
   ['opencode-go:', 'opencode-go'],
   ['custom:', 'custom'],

@@ -177,7 +177,7 @@ export function ClaimCardWithVerdicts({ claims, aggregatedVerdicts, labelToModel
 /**
  * Claim Evolution: shows how claims changed across rounds.
  */
-export function ClaimEvolution({ rounds, labelToModel: finalLabelToModel }) {
+export function ClaimEvolution({ rounds }) {
   if (!rounds || rounds.length < 2) return null;
 
   // Build claim data per round
@@ -197,20 +197,18 @@ export function ClaimEvolution({ rounds, labelToModel: finalLabelToModel }) {
   // Find claims that were contested in any round
   const contestedAcrossRounds = [];
   for (const rd of roundData) {
-    for (const cv of rd.contested) {
-      // Find which claim this is
-      for (const [label, claimList] of Object.entries(rd.claims)) {
-        for (const claim of claimList) {
-          const vi = rd.verdicts[claim.id];
-          if (vi && vi.majority_verdict !== 'strong') {
-            contestedAcrossRounds.push({
-              ...claim,
-              sourceLabel: label,
-              round: rd.round,
-              verdict: vi.majority_verdict,
-              agreement: vi.agreement,
-            });
-          }
+    // Find which claim this is
+    for (const [label, claimList] of Object.entries(rd.claims)) {
+      for (const claim of claimList) {
+        const vi = rd.verdicts[claim.id];
+        if (vi && vi.majority_verdict !== 'strong') {
+          contestedAcrossRounds.push({
+            ...claim,
+            sourceLabel: label,
+            round: rd.round,
+            verdict: vi.majority_verdict,
+            agreement: vi.agreement,
+          });
         }
       }
     }

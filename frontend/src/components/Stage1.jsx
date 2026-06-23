@@ -8,13 +8,25 @@ import './Stage1.css';
 
 export default function Stage1({ responses, startTime, endTime, onRetryProvider, onFireProvider }) {
   const [activeTab, setActiveTab] = useState(0);
+  const [isCopied, setIsCopied] = useState(false);
 
   // Reset activeTab if it becomes out of bounds
   useEffect(() => {
     if (responses && responses.length > 0 && activeTab >= responses.length) {
-      setActiveTab(responses.length - 1);
+      const timer = setTimeout(() => {
+        setActiveTab(responses.length - 1);
+      }, 0);
+      return () => clearTimeout(timer);
     }
   }, [responses, activeTab]);
+
+  // Reset copy state when tab changes
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setIsCopied(false);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [activeTab]);
 
   if (!responses || responses.length === 0) {
     return null;
@@ -28,14 +40,6 @@ export default function Stage1({ responses, startTime, endTime, onRetryProvider,
 
   // Get visuals for current tab
   const currentVisuals = getModelVisuals(currentResponse?.model);
-
-  // Copy functionality
-  const [isCopied, setIsCopied] = useState(false);
-
-  // Reset copy state when tab changes
-  useEffect(() => {
-    setIsCopied(false);
-  }, [activeTab]);
 
   const handleCopy = async () => {
     const textToCopy = typeof currentResponse.response === 'string'

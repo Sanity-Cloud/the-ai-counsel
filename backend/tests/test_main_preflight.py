@@ -188,6 +188,7 @@ def test_iterative_debate_passes_effective_content(tmp_path, monkeypatch):
 
     async def fake_debate(content, *args, **kwargs):
         captured["content"] = content
+        captured["documents"] = kwargs.get("documents")
         yield {"type": "debate_complete", "rounds": [], "cost_report": {"total_cost": 0, "total_calls": 0}}
 
     with patch("backend.main._run_model_preflight", new_callable=AsyncMock) as preflight:
@@ -214,8 +215,10 @@ def test_iterative_debate_passes_effective_content(tmp_path, monkeypatch):
                         list(response.iter_text())
 
     assert response.status_code == 200
-    assert "Attached Documents" in captured["content"]
-    assert "Document fact: Beta" in captured["content"]
+    assert captured["content"] == "Debate this."
+    assert captured["documents"]
+    assert captured["documents"][0]["name"] == "notes.txt"
+    assert captured["documents"][0]["text"] == "Document fact: Beta"
 
 
 def test_advisor_debate_passes_effective_question(tmp_path, monkeypatch):

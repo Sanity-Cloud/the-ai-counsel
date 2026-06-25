@@ -73,7 +73,7 @@ _OPENCODE_PRICING: Dict[str, Dict[str, Dict[str, Optional[float]]]] = {
         "mimo-v2.5-pro": {"input": 1.74, "output": 3.48, "cached": 0.0145},
         "deepseek-v4-pro": {"input": 1.74, "output": 3.48, "cached": 0.0145},
         "deepseek-v4-flash": {"input": 0.14, "output": 0.28, "cached": 0.0028},
-        "minimax-m3": {"input": 0.60, "output": 2.40, "cached": 0.12},
+        "minimax-m3": {"input": 0.30, "output": 1.20, "cached": 0.06},
         "minimax-m2.7": {"input": 0.30, "output": 1.20, "cached": 0.06},
         "minimax-m2.5": {"input": 0.30, "output": 1.20, "cached": 0.06},
         "qwen3.7-max": {"input": 2.50, "output": 7.50, "cached": 0.50},

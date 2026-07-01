@@ -3,6 +3,7 @@ import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import SearchContext from './SearchContext';
 import Stage1, { Stage1Skeleton } from './Stage1';
 import Stage2, { Stage2Skeleton } from './Stage2';
+import AuditResults from './AuditResults';
 import Stage3, { Stage3Skeleton } from './Stage3';
 import CouncilGrid from './CouncilGrid';
 import CouncilSetup from './CouncilSetup';
@@ -19,6 +20,7 @@ import DocumentUpload from './DocumentUpload';
 import './ChatInterface.css';
 import { getShortModelName } from '../utils/modelHelpers';
 import { resolveRoundPresentation } from '../utils/roundState';
+import { shouldRenderAuditResults } from '../utils/auditResults';
 
 function hasStage1Results(msg) {
     return Array.isArray(msg.stage1) && msg.stage1.length > 0;
@@ -694,24 +696,53 @@ function CouncilMessageRenderer({
                 ref={isActiveCouncilTurn ? stage2AnchorRef : null}
                 className="stage-scroll-anchor"
             >
-                {msg.loading?.stage2 && (!displayStage2 || displayStage2.length === 0) && <Stage2Skeleton />}
-                {Array.isArray(displayStage2) && displayStage2.length > 0 && (
-                    <Stage2
-                        rankings={displayStage2}
-                        labelToModel={displayMetadata.label_to_model}
-                        aggregateRankings={displayMetadata.aggregate_rankings}
-                        canonicalClaims={displayMetadata.canonical_claims}
-                        aggregateClaimVerdicts={displayMetadata.aggregate_claim_verdicts}
-                        critiqueMode={displayMetadata.critique_mode || msg.metadata?.critique_mode || 'freeform'}
-                        rankingStatus={displayMetadata.ranking_status}
-                        validRankingCount={displayMetadata.valid_ranking_count}
-                        invalidRankingCount={displayMetadata.invalid_ranking_count}
-                        startTime={msg.timers?.stage2Start}
-                        endTime={msg.timers?.stage2End}
-                        onRetryProvider={onRetryProvider}
-                        onFireProvider={onFireProvider}
-                    />
-                )}
+                {(() => {
+                    const auditMode = shouldRenderAuditResults(
+                        displayMetadata.critique_mode || msg.metadata?.critique_mode || 'freeform'
+                    );
+                    const auditDataAvailable = Boolean(
+                        (Array.isArray(msg.stage2a) && msg.stage2a.length > 0)
+                        || (Array.isArray(msg.stage2b) && msg.stage2b.length > 0)
+                        || msg.stage2c
+                        || displayMetadata.aggregated_2b
+                        || displayMetadata.stage2c_result
+                        || msg.loading?.stage2a || msg.loading?.stage2b || msg.loading?.stage2c
+                    );
+                    if (auditMode && auditDataAvailable) {
+                        return (
+                            <AuditResults
+                                stage2a={msg.stage2a}
+                                stage2b={msg.stage2b}
+                                stage2c={msg.stage2c}
+                                metadata={displayMetadata}
+                                loading={msg.loading || {}}
+                                timers={msg.timers || {}}
+                            />
+                        );
+                    }
+                    return (
+                        <>
+                            {msg.loading?.stage2 && (!displayStage2 || displayStage2.length === 0) && <Stage2Skeleton />}
+                            {Array.isArray(displayStage2) && displayStage2.length > 0 && (
+                                <Stage2
+                                    rankings={displayStage2}
+                                    labelToModel={displayMetadata.label_to_model}
+                                    aggregateRankings={displayMetadata.aggregate_rankings}
+                                    canonicalClaims={displayMetadata.canonical_claims}
+                                    aggregateClaimVerdicts={displayMetadata.aggregate_claim_verdicts}
+                                    critiqueMode={displayMetadata.critique_mode || msg.metadata?.critique_mode || 'freeform'}
+                                    rankingStatus={displayMetadata.ranking_status}
+                                    validRankingCount={displayMetadata.valid_ranking_count}
+                                    invalidRankingCount={displayMetadata.invalid_ranking_count}
+                                    startTime={msg.timers?.stage2Start}
+                                    endTime={msg.timers?.stage2End}
+                                    onRetryProvider={onRetryProvider}
+                                    onFireProvider={onFireProvider}
+                                />
+                            )}
+                        </>
+                    );
+                })()}
             </div>
 
             {/* Stage 3 */}

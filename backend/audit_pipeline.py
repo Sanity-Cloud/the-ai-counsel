@@ -298,14 +298,15 @@ async def extract_material_claims(
                 max_output_tokens=3000
             )
 
-            # Record usage/cost
-            if response.get("usage"):
-                usage = response.get("usage")
-                cumulative_usage["input_tokens"] += usage.get("input_tokens", 0)
-                cumulative_usage["output_tokens"] += usage.get("output_tokens", 0)
-                cumulative_usage["total_tokens"] += usage.get("total_tokens", 0)
-            if response.get("cost"):
-                cumulative_cost += response.get("cost", 0.0)
+            # Record usage/cost. Some providers return explicit null values for
+            # unavailable accounting fields, so coerce them to zero.
+            usage = response.get("usage") or {}
+            cumulative_usage["input_tokens"] += int(usage.get("input_tokens") or 0)
+            cumulative_usage["output_tokens"] += int(usage.get("output_tokens") or 0)
+            cumulative_usage["total_tokens"] += int(usage.get("total_tokens") or 0)
+            response_cost = response.get("cost")
+            if isinstance(response_cost, (int, float)):
+                cumulative_cost += float(response_cost)
 
             if response.get("error"):
                 last_error = response.get("error_message")
@@ -1284,13 +1285,21 @@ async def run_audit_pipeline(
         try:
             await check_disconnect()
             session_id = f"{conversation_id}-3"
-            final_res = await query_model(chairman, messages, temperature=settings.stage3_temperature, conversation_id=session_id)
-            stage3_response = {
-                "model": chairman,
-                "response": final_res.get("content", ""),
-                "usage": final_res.get("usage"),
-                "cost": final_res.get("cost"),
-            }
+            final_res = await query_model(
+                chairman,
+                messages,
+                temperature=settings.chairman_temperature,
+                conversation_id=session_id,
+            )
+            if final_res.get("error"):
+                stage3_response = {"model": chairman, "error": True, "error_message": final_res.get("error_message", "Stage 3 provider error.")}
+            else:
+                stage3_response = {
+                    "model": chairman,
+                    "response": final_res.get("content", ""),
+                    "usage": final_res.get("usage"),
+                    "cost": final_res.get("cost"),
+                }
         except Exception as e:
             stage3_response = {"model": chairman, "error": True, "error_message": str(e)}
 
@@ -1349,6 +1358,30 @@ async def run_audit_pipeline(
             "stage2c_result": stage2c_result,
         }
     }]
+
+    # ponytail: terminal-error guard - a provider error dict (vs raised exception)
+    # must surface as a failed debate, not silently skip Stage 4 and complete.
+    if (
+        execution_mode == "full"
+        and stage3_response
+        and stage3_response.get("error")
+    ):
+        yield {
+            "type": "debate_complete",
+            "rounds": rounds_data,
+            "critique_mode": "audit",
+            "debate_rounds_configured": 1,
+            "debate_rounds_executed": 1,
+            "convergence_status": "failed",
+            "converged": False,
+            "error": {
+                "stage": "stage3",
+                "status": "failed_synthesis",
+                "message": stage3_response.get("error_message", "Stage 3 synthesis failed."),
+            },
+            "cost_report": build_iterative_debate_cost_report(rounds_data, None),
+        }
+        return
 
     yield {
         "type": "debate_complete",

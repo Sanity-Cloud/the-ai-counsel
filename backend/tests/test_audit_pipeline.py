@@ -1,6 +1,7 @@
 import pytest
 import json
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 from backend.audit_pipeline import (
     parse_stage2a_output,
@@ -9,6 +10,7 @@ from backend.audit_pipeline import (
     normalize_and_deduplicate_claims,
     stage2a_collect_evaluations,
     stage2b_collect_audits,
+    extract_material_claims,
     format_aggregate_verdicts_for_prompt,
     format_audit_corrections_for_stage4
 )
@@ -88,15 +90,16 @@ def test_parse_audit_verdicts_repetitive_boilerplate():
 
 @pytest.fixture
 def mock_settings():
-    s = MagicMock()
-    s.debate_rounds = 1
-    s.critique_mode = "audit"
-    s.audit_profile = "general"
-    s.stage2_temperature = 0.3
-    s.stage3_temperature = 0.4
-    s.response_language = "English"
-    s.stage4_prompt = ""
-    return s
+    return SimpleNamespace(
+        debate_rounds=1,
+        critique_mode="audit",
+        audit_profile="general",
+        stage2_temperature=0.3,
+        chairman_temperature=0.4,
+        response_language="English",
+        stage4_prompt="",
+        claim_extraction_timeout_seconds=180.0,
+    )
 
 def make_async_gen(items):
     async def gen(*args, **kwargs):
@@ -161,6 +164,54 @@ async def test_run_audit_pipeline_full_e2e(mock_settings):
         assert complete_event["critique_mode"] == "audit"
         assert complete_event["debate_rounds_executed"] == 1
         assert complete_event["convergence_status"] == "not_applicable"
+
+
+@pytest.mark.asyncio
+async def test_run_audit_pipeline_stage3_provider_error_surfaces(mock_settings):
+    """ponytail: provider error dict (not raised exception) must fail the debate,
+    not silently skip Stage 4 and complete as not_applicable."""
+    stage1_items = [
+        2,
+        {"model": "model_a", "response": "Answer A", "error": None},
+        {"model": "model_b", "response": "Answer B", "error": None}
+    ]
+    stage2a_items = [
+        {"type": "stage2a_init", "total": 2, "round": 1},
+        {"type": "stage2a_progress", "data": {"model": "model_a", "parsed": {"ranking": ["Response B", "Response A"]}}, "count": 1, "total": 2, "round": 1},
+        {"type": "stage2a_progress", "data": {"model": "model_b", "parsed": {"ranking": ["Response B", "Response A"]}}, "count": 2, "total": 2, "round": 1},
+        {"type": "stage2a_complete", "data": [{"model": "model_a"}, {"model": "model_b"}], "label_to_model": {"A": "model_a", "B": "model_b"}, "round": 1}
+    ]
+    stage2b_items = [
+        {"type": "stage2b_init", "total": 2, "round": 1},
+        {"type": "stage2b_progress", "data": {"model": "model_a"}, "count": 1, "total": 2, "round": 1},
+        {"type": "stage2b_progress", "data": {"model": "model_b"}, "count": 2, "total": 2, "round": 1},
+        {"type": "stage2b_complete", "data": [], "label_to_model": {}, "round": 1}
+    ]
+    raw_claims = {"A": [{"id": "c1", "claim": "disposition is sound"}]}
+    stage2c_val = {"record": {"adopt": ["C-001"], "reject": [], "qualify": [], "authority_gaps": [], "record_gaps": [], "stage3_constraints": []}}
+
+    with patch("backend.audit_pipeline.get_settings", return_value=mock_settings), \
+         patch("backend.audit_pipeline.stage1_collect_responses", side_effect=make_async_gen(stage1_items)), \
+         patch("backend.audit_pipeline.stage2a_collect_evaluations", side_effect=make_async_gen(stage2a_items)), \
+         patch("backend.audit_pipeline.extract_material_claims", return_value={"claims": raw_claims, "model": "extractor"}), \
+         patch("backend.audit_pipeline.stage2b_collect_audits", side_effect=make_async_gen(stage2b_items)), \
+         patch("backend.audit_pipeline.stage2c_adjudicate", return_value=stage2c_val), \
+         patch("backend.audit_pipeline.query_model", return_value={"error": True, "error_message": "API Failure"}), \
+         patch("backend.audit_pipeline.get_chairman_model", return_value="chairman"):
+
+        events = []
+        async for event in run_audit_pipeline("Query?", execution_mode="full", models_override=["model_a", "model_b"], conversation_id="test-conv"):
+            events.append(event)
+
+        event_types = [e["type"] for e in events]
+        assert "stage3_complete" in event_types
+        assert "stage4_start" not in event_types
+        assert "stage4_complete" not in event_types
+        complete = next(e for e in events if e["type"] == "debate_complete")
+        assert complete["convergence_status"] == "failed"
+        assert complete["error"]["stage"] == "stage3"
+        assert complete["error"]["status"] == "failed_synthesis"
+        assert "API Failure" in complete["error"]["message"]
 
 @pytest.mark.asyncio
 async def test_run_audit_pipeline_chat_only(mock_settings):
@@ -719,3 +770,34 @@ async def test_run_audit_pipeline_stage4_fails_validation_twice(mock_settings):
         assert data["error"] is True
         assert "Stage 4 failed preservation validation" in data["error_message"]
         assert data["validation"]["passed"] is False
+
+
+@pytest.mark.asyncio
+async def test_extract_material_claims_accepts_null_usage_and_cost(mock_settings):
+    """Provider accounting fields may be explicit null without invalidating claims."""
+    mock_settings.claim_extraction_timeout_seconds = 180.0
+    response = {
+        "content": json.dumps({
+            "Response A": [
+                {"id": "A-001", "claim": "Water boils near 100 C at sea level."}
+            ]
+        }),
+        "usage": {
+            "input_tokens": None,
+            "output_tokens": None,
+            "total_tokens": None,
+        },
+        "cost": None,
+        "error": False,
+    }
+
+    with patch("backend.audit_pipeline._query_model_gated", return_value=response):
+        result = await extract_material_claims(
+            "Response A:\nAnswer A",
+            "test-null-accounting",
+            mock_settings,
+            chairman_override="chairman",
+        )
+
+    assert result["claims"]["Response A"][0]["id"] == "A-001"
+    assert result["cost"] is None

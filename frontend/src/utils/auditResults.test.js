@@ -216,4 +216,19 @@ describe('buildAuditViewModel', () => {
     expect(vm.stage2c.record).toEqual(twoCResult.record);
     expect(vm.stage2c.sections).toHaveLength(6);
   });
+
+  it('does not throw when loading and timers are null', () => {
+    const vm = buildAuditViewModel({
+      stage2a: null,
+      stage2b: null,
+      stage2c: null,
+      metadata: {},
+      loading: null,
+      timers: null,
+    });
+    expect(vm.stage2a.loading).toBe(false);
+    expect(vm.stage2b.loading).toBe(false);
+    expect(vm.stage2c.loading).toBe(false);
+    expect(vm.stage2a.duration.start).toBeUndefined();
+  });
 });

@@ -155,6 +155,9 @@ export function buildCorrectionRecordSections(record) {
 /** Top-level view model used by AuditResults.jsx. */
 export function buildAuditViewModel({ stage2a, stage2b, stage2c, metadata = {}, loading = {}, timers = {} } = {}) {
   const meta = metadata || {};
+  const loadingState = loading && typeof loading === 'object' ? loading : {};
+  const timerState = timers && typeof timers === 'object' ? timers : {};
+
   const stage2aResults = pickResults(stage2a, ['stage2a_results', 'stage2a', 'evaluations'], meta) || [];
   const stage2bView = buildStage2bView(stage2b, meta);
   const stage2cView = normalizeStage2c(stage2c, meta);
@@ -183,21 +186,21 @@ export function buildAuditViewModel({ stage2a, stage2b, stage2c, metadata = {}, 
       coverage,
       aggregateRankings,
       labelToModel,
-      loading: Boolean(loading.stage2a || loading.stage2),
-      duration: { start: timers.stage2aStart, end: timers.stage2aEnd },
+      loading: Boolean(loadingState.stage2a || loadingState.stage2),
+      duration: { start: timerState.stage2aStart, end: timerState.stage2aEnd },
     },
     stage2b: {
       heading: STAGE2B_HEADING,
       ...stage2bView,
-      loading: Boolean(loading.stage2b),
-      duration: { start: timers.stage2bStart, end: timers.stage2bEnd },
+      loading: Boolean(loadingState.stage2b),
+      duration: { start: timerState.stage2bStart, end: timerState.stage2bEnd },
     },
     stage2c: {
       heading: STAGE2C_HEADING,
       ...stage2cView,
       sections: buildCorrectionRecordSections(stage2cView.record),
-      loading: Boolean(loading.stage2c || loading.stage2),
-      duration: { start: timers.stage2cStart, end: timers.stage2cEnd },
+      loading: Boolean(loadingState.stage2c || loadingState.stage2),
+      duration: { start: timerState.stage2cStart, end: timerState.stage2cEnd },
     },
   };
 }

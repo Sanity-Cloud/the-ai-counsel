@@ -300,7 +300,9 @@ async def extract_material_claims(
 
             # Record usage/cost. Some providers return explicit null values for
             # unavailable accounting fields, so coerce them to zero.
-            usage = response.get("usage") or {}
+            usage = response.get("usage")
+            if not isinstance(usage, dict):
+                usage = {}
             cumulative_usage["input_tokens"] += int(usage.get("input_tokens") or 0)
             cumulative_usage["output_tokens"] += int(usage.get("output_tokens") or 0)
             cumulative_usage["total_tokens"] += int(usage.get("total_tokens") or 0)
@@ -1291,7 +1293,13 @@ async def run_audit_pipeline(
                 temperature=settings.chairman_temperature,
                 conversation_id=session_id,
             )
-            if final_res.get("error"):
+            if not isinstance(final_res, dict):
+                stage3_response = {
+                    "model": chairman,
+                    "error": True,
+                    "error_message": "Stage 3 query returned an invalid response.",
+                }
+            elif final_res.get("error"):
                 stage3_response = {"model": chairman, "error": True, "error_message": final_res.get("error_message", "Stage 3 provider error.")}
             else:
                 stage3_response = {

@@ -801,3 +801,75 @@ async def test_extract_material_claims_accepts_null_usage_and_cost(mock_settings
 
     assert result["claims"]["Response A"][0]["id"] == "A-001"
     assert result["cost"] is None
+
+
+@pytest.mark.asyncio
+async def test_extract_material_claims_accepts_non_dict_usage(mock_settings):
+    """Provider accounting fields may be a non-dict truthy value without crashing."""
+    mock_settings.claim_extraction_timeout_seconds = 180.0
+    response = {
+        "content": json.dumps({
+            "Response A": [
+                {"id": "A-001", "claim": "Water boils near 100 C at sea level."}
+            ]
+        }),
+        "usage": "truthy but invalid type",
+        "cost": 0.05,
+        "error": False,
+    }
+
+    with patch("backend.audit_pipeline._query_model_gated", return_value=response):
+        result = await extract_material_claims(
+            "Response A:\nAnswer A",
+            "test-nondict-accounting",
+            mock_settings,
+            chairman_override="chairman",
+        )
+
+    assert result["claims"]["Response A"][0]["id"] == "A-001"
+    assert result["cost"] == 0.05
+
+
+@pytest.mark.asyncio
+async def test_run_audit_pipeline_stage3_invalid_type_provider_result(mock_settings):
+    """Verify that run_audit_pipeline handles a non-dictionary result from query_model gracefully."""
+    stage1_items = [
+        2,
+        {"model": "model_a", "response": "Answer A", "error": None},
+        {"model": "model_b", "response": "Answer B", "error": None}
+    ]
+    stage2a_items = [
+        {"type": "stage2a_init", "total": 2, "round": 1},
+        {"type": "stage2a_progress", "data": {"model": "model_a", "parsed": {"ranking": ["Response B", "Response A"]}}, "count": 1, "total": 2, "round": 1},
+        {"type": "stage2a_progress", "data": {"model": "model_b", "parsed": {"ranking": ["Response B", "Response A"]}}, "count": 2, "total": 2, "round": 1},
+        {"type": "stage2a_complete", "data": [{"model": "model_a"}, {"model": "model_b"}], "label_to_model": {"A": "model_a", "B": "model_b"}, "round": 1}
+    ]
+    stage2b_items = [
+        {"type": "stage2b_init", "total": 2, "round": 1},
+        {"type": "stage2b_progress", "data": {"model": "model_a"}, "count": 1, "total": 2, "round": 1},
+        {"type": "stage2b_progress", "data": {"model": "model_b"}, "count": 2, "total": 2, "round": 1},
+        {"type": "stage2b_complete", "data": [], "label_to_model": {}, "round": 1}
+    ]
+    raw_claims = {"A": [{"id": "c1", "claim": "disposition is sound"}]}
+    stage2c_val = {"record": {"adopt": ["C-001"], "reject": [], "qualify": [], "authority_gaps": [], "record_gaps": [], "stage3_constraints": []}}
+
+    with patch("backend.audit_pipeline.get_settings", return_value=mock_settings), \
+         patch("backend.audit_pipeline.stage1_collect_responses", side_effect=make_async_gen(stage1_items)), \
+         patch("backend.audit_pipeline.stage2a_collect_evaluations", side_effect=make_async_gen(stage2a_items)), \
+         patch("backend.audit_pipeline.extract_material_claims", return_value={"claims": raw_claims, "model": "extractor"}), \
+         patch("backend.audit_pipeline.stage2b_collect_audits", side_effect=make_async_gen(stage2b_items)), \
+         patch("backend.audit_pipeline.stage2c_adjudicate", return_value=stage2c_val), \
+         patch("backend.audit_pipeline.query_model", return_value="invalid string response"), \
+         patch("backend.audit_pipeline.get_chairman_model", return_value="chairman"):
+
+        events = []
+        async for event in run_audit_pipeline("Query?", execution_mode="full", models_override=["model_a", "model_b"], conversation_id="test-conv"):
+            events.append(event)
+
+        event_types = [e["type"] for e in events]
+        assert "stage3_complete" in event_types
+        complete = next(e for e in events if e["type"] == "debate_complete")
+        assert complete["convergence_status"] == "failed"
+        assert complete["error"]["stage"] == "stage3"
+        assert complete["error"]["status"] == "failed_synthesis"
+        assert "invalid response" in complete["error"]["message"]

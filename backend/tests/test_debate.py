@@ -1,4 +1,6 @@
 """Tests for iterative debate logic."""
+import json
+
 import pytest
 
 from backend.council import EvaluationError
@@ -7,7 +9,7 @@ from backend.debate import (
     pre_segment_paragraphs, format_numbered_paragraphs,
     aggregate_claim_verdicts, select_top_claims_for_model,
     format_claim_verdicts_for_prompt, format_contested_claims_for_stage4,
-    _parse_claim_verdicts_from_ranking,
+    extract_canonical_claims, _parse_claim_verdicts_from_ranking,
 )
 
 MAX_DEBATE_ROUNDS = 5
@@ -226,3 +228,57 @@ FINAL RANKING:
         text = '{"A1":{"verdict":"strong","reason":"The clause expressly provides a thirty-day payment deadline."}}'
         with pytest.raises(EvaluationError, match="Claim IDs"):
             _parse_claim_verdicts_from_ranking(text, ["A1", "A2"])
+
+
+    def test_accepts_uniform_verdicts_with_claim_specific_reasons(self):
+        verdicts = {
+            f"A{i}": {
+                "verdict": "strong",
+                "reason": f"Claim {i} is independently supported by a distinct cited premise in the supplied record.",
+            }
+            for i in range(1, 13)
+        }
+
+        parsed = _parse_claim_verdicts_from_ranking(
+            json.dumps(verdicts),
+            list(verdicts),
+        )
+
+        assert len(parsed) == 12
+        assert all(detail["verdict"] == "strong" for detail in parsed.values())
+
+    def test_rejects_uniform_verdicts_with_copied_reasons(self):
+        verdicts = {
+            f"A{i}": {
+                "verdict": "strong",
+                "reason": "The supplied record directly supports this material claim without qualification.",
+            }
+            for i in range(1, 13)
+        }
+
+        with pytest.raises(EvaluationError, match="Repetitive claim-evaluation reasons"):
+            _parse_claim_verdicts_from_ranking(json.dumps(verdicts), list(verdicts))
+
+
+@pytest.mark.asyncio
+async def test_extract_canonical_claims_executes_schema_normalizer(monkeypatch):
+    async def fake_query_model(*args, **kwargs):
+        return {
+            "error": False,
+            "finish_reason": "stop",
+            "content": '{"Response A":[{"id":"wrong","claim":"The deadline depends on service."}]}',
+        }
+
+    monkeypatch.setattr("backend.council.query_model", fake_query_model)
+
+    result = await extract_canonical_claims(
+        "Response A:\nThe deadline depends on service.",
+        chairman_model="notion2api:test",
+        expected_labels=["Response A"],
+    )
+
+    assert result == {
+        "Response A": [
+            {"id": "A1", "claim": "The deadline depends on service."},
+        ]
+    }

@@ -23,6 +23,29 @@
   line-height: 1.5;
 }
 
+.stage2-ranking-alert {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.stage2-ranking-alert--error {
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.22);
+  border: 1px solid rgba(248, 113, 113, 0.45);
+}
+
+.stage2-ranking-alert--warning {
+  color: #fde68a;
+  background: rgba(120, 53, 15, 0.22);
+  border: 1px solid rgba(251, 191, 36, 0.4);
+}
+
 /* Aggregate Rankings Card */
 .aggregate-rankings {
   background: rgba(251, 146, 60, 0.08); /* Amber tint */

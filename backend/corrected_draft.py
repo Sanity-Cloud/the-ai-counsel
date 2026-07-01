@@ -22,6 +22,51 @@ STAGE4_EDIT_SYSTEM_PROMPT = (
 
 STAGE4_EDIT_PLAN_WORD_THRESHOLD = 250
 STAGE4_MAX_EDIT_OPERATIONS = 80
+STAGE4_AUTHORIZED_EDIT_PLAN_MINIMUM_WORD_RATIO = 0.70
+
+_COMPRESSION_ACTION = r"(?:cut|condens(?:e|ed)|shorten(?:ed)?|trim(?:med)?|compress(?:ed)?|remov(?:e|ed)|delet(?:e|ed)|omit(?:ted)?|eliminat(?:e|ed)|reduc(?:e|ed))"
+_COMPRESSION_TARGET = r"(?:section|paragraph|passage|material|analysis|discussion|content|middle|detour|letter|document)"
+_COMPRESSION_PATTERNS = (
+    rf"\b{_COMPRESSION_ACTION}\b.{{0,80}}\b{_COMPRESSION_TARGET}\b",
+    rf"\b{_COMPRESSION_TARGET}\b.{{0,80}}\b(?:should|must|needs?\s+to|can)\s+(?:be\s+)?{_COMPRESSION_ACTION}\b",
+    r"\b(?:cut|reduce|shorten|condense|trim|compress)\b.{0,60}\b(?:by|to)\s+(?:roughly\s+|about\s+|approximately\s+)?(?:\d+(?:\.\d+)?%|one[- ]third|two[- ]thirds?|half|a\s+single\s+paragraph|one\s+paragraph)\b",
+    r"\bcut\s+or\s+(?:sharply\s+)?condense\b",
+    r"\b(?:sharply\s+condense|substantially\s+shorten|trim\s+down|pare\s+down)\b",
+)
+_COMPRESSION_NEGATION_PATTERN = re.compile(
+    rf"\b(?:do\s+not|don't|must\s+not|should\s+not|cannot|can't|never)\b.{{0,60}}\b{_COMPRESSION_ACTION}\b",
+    re.IGNORECASE,
+)
+
+
+def stage4_guidance_authorizes_compression(
+    verdict_text: str,
+    corrections_text: str,
+) -> bool:
+    """Return True only for affirmative guidance to cut developed source material."""
+    guidance = "\n".join((verdict_text or "", corrections_text or ""))
+    for sentence in re.split(r"(?<=[.!?])\s+|[\r\n]+", guidance):
+        normalized = re.sub(r"\s+", " ", sentence).strip()
+        if not normalized or _COMPRESSION_NEGATION_PATTERN.search(normalized):
+            continue
+        if any(re.search(pattern, normalized, re.IGNORECASE) for pattern in _COMPRESSION_PATTERNS):
+            return True
+    return False
+
+
+def resolve_stage4_edit_plan_minimum_word_ratio(
+    requested_ratio: float,
+    verdict_text: str,
+    corrections_text: str,
+) -> Tuple[float, bool]:
+    """Relax only the exact-edit floor when the adjudication affirmatively requires cuts."""
+    compression_authorized = stage4_guidance_authorizes_compression(
+        verdict_text,
+        corrections_text,
+    )
+    if not compression_authorized:
+        return requested_ratio, False
+    return min(requested_ratio, STAGE4_AUTHORIZED_EDIT_PLAN_MINIMUM_WORD_RATIO), True
 
 
 def estimate_stage4_output_tokens(original_text: str) -> int:
@@ -194,7 +239,11 @@ def validate_corrected_draft(
     corr_word_count = len(corrected_text.split())
 
     if orig_word_count > 50 and corr_word_count < (minimum_word_ratio * orig_word_count):
-        return False, f"Draft is too short ({corr_word_count} words vs original {orig_word_count} words). Prohibited from summarization or compression."
+        minimum_words = int(minimum_word_ratio * orig_word_count)
+        return False, (
+            f"Draft is too short ({corr_word_count} words vs original {orig_word_count} words; "
+            f"minimum {minimum_words}). Unjustified summarization or compression is prohibited."
+        )
 
     # 3. Placeholder validation - Prohibit newly invented placeholders
     orig_placeholders = extract_placeholders(original_text)
@@ -348,7 +397,17 @@ async def generate_corrected_draft(
         stage4_prompt = default_template.format(**prompt_args)
 
     original_word_count = len((original_text or "").split())
+    edit_plan_minimum_word_ratio, compression_authorized = (
+        resolve_stage4_edit_plan_minimum_word_ratio(
+            minimum_word_ratio,
+            verdict_text,
+            corrections_text,
+        )
+    )
     minimum_required_words = int(original_word_count * minimum_word_ratio)
+    edit_plan_minimum_required_words = int(
+        original_word_count * edit_plan_minimum_word_ratio
+    )
     stage4_prompt += (
         "\n\n<PRESERVATION_CONTRACT>\n"
         "The ADJUDICATION_RECORD and REQUIRED_CORRECTIONS are editorial guidance only. "
@@ -424,6 +483,11 @@ async def generate_corrected_draft(
                 "passed": False,
                 "attempts": attempts,
                 "errors": [result.get("error_message", "Model invocation failed")],
+                "minimum_word_ratio": minimum_word_ratio,
+                "minimum_required_words": minimum_required_words,
+                "edit_plan_minimum_word_ratio": edit_plan_minimum_word_ratio,
+                "edit_plan_minimum_required_words": edit_plan_minimum_required_words,
+                "compression_authorized": compression_authorized,
                 "max_output_tokens": attempt_token_budget,
             }
             result["error_message"] = (
@@ -446,7 +510,7 @@ async def generate_corrected_draft(
                 valid, validation_error = validate_corrected_draft(
                     original_text,
                     candidate,
-                    minimum_word_ratio,
+                    edit_plan_minimum_word_ratio,
                 )
                 error_msg = validation_error
                 if valid:
@@ -464,6 +528,10 @@ async def generate_corrected_draft(
                         "recovered_from": feedback_context,
                         "generation_strategy": "exact_edit_plan",
                         "edits_applied": edits_applied,
+                        "minimum_word_ratio": edit_plan_minimum_word_ratio,
+                        "minimum_required_words": edit_plan_minimum_required_words,
+                        "default_minimum_word_ratio": minimum_word_ratio,
+                        "compression_authorized": compression_authorized,
                         "max_output_tokens": attempt_token_budget,
                     }
                     return result
@@ -485,6 +553,10 @@ async def generate_corrected_draft(
                     "attempts": attempts,
                     "errors": [],
                     "generation_strategy": "full_document",
+                    "minimum_word_ratio": minimum_word_ratio,
+                    "minimum_required_words": minimum_required_words,
+                    "edit_plan_minimum_word_ratio": edit_plan_minimum_word_ratio,
+                    "compression_authorized": compression_authorized,
                     "max_output_tokens": attempt_token_budget,
                 }
                 return result
@@ -510,6 +582,11 @@ async def generate_corrected_draft(
         "passed": False,
         "attempts": attempts,
         "errors": [feedback_context] if feedback_context else ["Unknown validation error"],
+        "minimum_word_ratio": minimum_word_ratio,
+        "minimum_required_words": minimum_required_words,
+        "edit_plan_minimum_word_ratio": edit_plan_minimum_word_ratio,
+        "edit_plan_minimum_required_words": edit_plan_minimum_required_words,
+        "compression_authorized": compression_authorized,
         "max_output_tokens": output_token_budget,
     }
     result["error"] = True

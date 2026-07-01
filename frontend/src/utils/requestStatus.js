@@ -29,8 +29,12 @@ export function getRequestStatusLabel(status) {
 
 export function markTerminalResult(item = {}) {
   const failed = Boolean(item.error);
+  const backendStatus = item.result_status
+    || (item.status && !KNOWN_STATUSES.has(item.status) ? item.status : null);
+
   return {
     ...item,
+    ...(backendStatus ? { result_status: backendStatus } : {}),
     status: failed ? 'failed' : 'completed',
     pending: false,
     running: false,

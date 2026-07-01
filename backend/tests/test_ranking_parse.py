@@ -1,6 +1,12 @@
 """Tests for Stage 2 ranking parse helpers."""
 
-from backend.council import build_stage_texts, is_evaluator_refusal, parse_ranking_from_text
+from backend.council import (
+    build_stage2_result,
+    build_stage_texts,
+    is_annotation_only_evaluator_output,
+    is_evaluator_refusal,
+    parse_ranking_from_text,
+)
 
 
 def test_parse_ranking_filters_hallucinated_labels():
@@ -79,6 +85,27 @@ def test_parse_ranking_recovers_numbered_tail_without_heading():
     )
 
     assert parsed == ["Response B", "Response A"]
+
+
+def test_annotation_only_output_is_rejected_as_a_ranking():
+    text = """[
+  {"response": "Response A", "paragraph": 1, "verdict": "strong", "comment": "Accurate."},
+  {"response": "Response B", "paragraph": 1, "verdict": "weak", "comment": "Incomplete."}
+]"""
+
+    assert is_annotation_only_evaluator_output(text) is True
+
+    result = build_stage2_result(
+        "model-a",
+        {"content": text, "error": False},
+        valid_labels=["Response A", "Response B"],
+        expected_count=2,
+    )
+
+    assert result["error"] is True
+    assert result["status"] == "annotation_only_evaluator_output"
+    assert result["parsed_ranking"] == []
+    assert "omitted the required complete peer ranking" in result["error_message"]
 
 
 def test_build_stage_texts_excludes_failed_rankings():

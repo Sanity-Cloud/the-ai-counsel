@@ -23,6 +23,19 @@ describe('requestStatus', () => {
     });
   });
 
+  it('preserves backend diagnostic status while mapping terminal failures for the UI', () => {
+    expect(markTerminalResult({
+      model: 'm',
+      status: 'annotation_only_evaluator_output',
+      error: true,
+    })).toMatchObject({
+      model: 'm',
+      status: 'failed',
+      result_status: 'annotation_only_evaluator_output',
+      error: true,
+    });
+  });
+
   it('preserves the manifest and emits an explicit unaccounted row', () => {
     const reconciled = reconcileTerminalResults(
       [{ model: 'a', status: 'running' }, { model: 'b', status: 'queued' }],

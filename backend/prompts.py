@@ -162,22 +162,28 @@ Deliver the definitive answer. Explain how the deliberation evolved across round
 
 # --- Phase 2: Claim & Paragraph Critique Mode Prompts ---
 
-CLAIM_EXTRACTION_PROMPT = """Decompose each response into individual claims (specific, falsifiable statements). Each claim should be one clear assertion.
+CLAIM_EXTRACTION_PROMPT = """Decompose each response into a compact set of material claims.
+
+Extraction rules:
+- Extract no more than 8 claims per response.
+- Each claim must be one specific, independently assessable assertion of no more than 60 words.
+- Prefer claims that affect the answer's conclusion, governing rule, factual premise, remedy, deadline, or recommended action.
+- Do not extract headings, rhetorical framing, disclaimers, quotations, or duplicate restatements as separate claims.
+- Use every Response label shown below exactly once and do not invent additional labels.
+- Use IDs formed from the response letter plus a sequential number: A1, A2, B1, and so on.
 
 {responses_text}
 
-Respond with ONLY valid JSON (no other text):
-```json
+Respond with ONLY one complete valid JSON object. Do not use markdown fences or commentary:
 {{
   "Response A": [
-    {{"id": "A1", "claim": "specific falsifiable statement"}},
-    {{"id": "A2", "claim": "another statement"}}
+    {{"id": "A1", "claim": "specific material assertion"}},
+    {{"id": "A2", "claim": "another material assertion"}}
   ],
   "Response B": [
-    {{"id": "B1", "claim": "statement"}}
+    {{"id": "B1", "claim": "material assertion"}}
   ]
-}}
-```"""
+}}"""
 
 STAGE2_PARAGRAPH_PROMPT = """You are evaluating responses to: {user_query}
 
@@ -216,22 +222,24 @@ Evaluation rules:
 - A claim is not supported merely because a candidate response states it.
 - Judge the substance of the claim, not whether it accurately restates its source response.
 - Give a concrete reason tied to the claim's accuracy, support, reasoning, or omission.
+- Evaluate each claim independently instead of defaulting every claim to the same verdict.
+- A uniform verdict distribution is permitted only when each claim-specific reason independently supports it.
 - Do not use boilerplate such as "accurately reflects the claim" or "supported by the response."
 - Do not identify, infer, or mention model or provider names.
 - Include every listed claim ID exactly once and no unknown IDs.
 
-Respond with valid JSON followed by your ranking:
+Begin with the complete ranking so it cannot be lost if the response is truncated. Then return one complete JSON object containing every claim evaluation.
+
+FINAL RANKING:
+1. Response A
+2. Response B
 
 ```json
 {{
   "A1": {{"verdict": "strong", "reason": "Specific substantive basis in one sentence."}},
   "A2": {{"verdict": "flawed", "reason": "Specific error or missing support in one sentence."}}
 }}
-```
-
-FINAL RANKING:
-1. Response A
-2. Response B"""
+```"""
 
 # --- Phase 2: Audit Mode Prompts ---
 

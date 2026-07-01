@@ -4,7 +4,8 @@ import math
 import asyncio
 import json
 import logging
-from typing import Any, AsyncGenerator, Dict, List, Optional
+import re
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 from .settings import get_settings
 from .prompts import apply_response_language
@@ -89,66 +90,117 @@ def format_numbered_paragraphs(response_text: str) -> str:
 async def extract_canonical_claims(
     responses_text: str,
     chairman_model: Optional[str] = None,
+    expected_labels: Optional[List[str]] = None,
 ) -> Optional[Dict[str, List[Dict[str, str]]]]:
-    """Extract canonical claims via single LLM call using the chairman model.
+    """Extract and validate a bounded canonical-claim schema.
 
-    Uses the chairman to avoid bias (council models should not write their own exam).
-    Falls back to free-form mode if extraction fails or times out (90s).
-    Returns {label: [{id, claim}]} or None on failure.
+    The chairman gets one automatic structured-output retry. Claim IDs are
+    normalized deterministically so downstream evaluators receive a complete,
+    unique schema even when the model returns inconsistent IDs.
     """
     from .prompts import CLAIM_EXTRACTION_PROMPT
     from .council import query_model
     from .json_repair import extract_json_block
 
     settings = get_settings()
-    prompt = apply_response_language(
+    extractor = chairman_model or get_chairman_model()
+    timeout_val = float(getattr(settings, "claim_extraction_timeout_seconds", 180.0) or 180.0)
+    labels = expected_labels or re.findall(r"(?m)^(Response\s+[A-Z]+):", responses_text)
+    labels = list(dict.fromkeys(str(label).strip() for label in labels if str(label).strip()))
+    base_prompt = apply_response_language(
         CLAIM_EXTRACTION_PROMPT.format(responses_text=responses_text),
         settings.response_language,
     )
-    messages = [{"role": "user", "content": prompt}]
 
-    extractor = chairman_model or get_chairman_model()
-    timeout_val = getattr(settings, "claim_extraction_timeout_seconds", 180.0)
-    # For Notion2API models the provider clamps to max(timeout_val, 600s), so
-    # pass timeout_val explicitly so both the httpx connection and the outer
-    # asyncio.wait_for share the same budget.  Previously query_model used its
-    # default of 120 s while wait_for used 180 s — on slow requests httpx could
-    # be the first to give up, discarding partial content.
-    try:
-        response = await asyncio.wait_for(
-            query_model(extractor, messages, temperature=0.2, timeout=timeout_val),
-            timeout=timeout_val,
+    def normalize_schema(parsed: Any) -> Tuple[Optional[Dict[str, List[Dict[str, str]]]], str]:
+        if isinstance(parsed, dict) and isinstance(parsed.get("claims"), dict):
+            parsed = parsed["claims"]
+        if not isinstance(parsed, dict):
+            return None, f"top-level value was {type(parsed).__name__}, not an object"
+
+        by_label = {
+            str(key).strip().strip('"').strip("'").strip(): value
+            for key, value in parsed.items()
+        }
+        ordered_labels = labels or list(by_label.keys())
+        normalized: Dict[str, List[Dict[str, str]]] = {}
+
+        for label in ordered_labels:
+            raw_claims = by_label.get(label)
+            if not isinstance(raw_claims, list) or not raw_claims:
+                return None, f"{label} was missing or did not contain a non-empty claim list"
+
+            prefix_match = re.search(r"([A-Z]+)$", label)
+            prefix = prefix_match.group(1) if prefix_match else "C"
+            clean_claims: List[Dict[str, str]] = []
+            for raw_claim in raw_claims[:8]:
+                if not isinstance(raw_claim, dict):
+                    continue
+                claim_text = str(raw_claim.get("claim") or raw_claim.get("text") or "").strip()
+                if not claim_text:
+                    continue
+                clean_claims.append({
+                    "id": f"{prefix}{len(clean_claims) + 1}",
+                    "claim": claim_text,
+                })
+
+            if not clean_claims:
+                return None, f"{label} contained no usable claim objects"
+            normalized[label] = clean_claims
+
+        return normalized, ""
+
+    last_error = "unknown extraction failure"
+    for attempt in range(1, 3):
+        retry_suffix = ""
+        if attempt > 1:
+            retry_suffix = (
+                "\n\nThe prior output was unusable. Return exactly one complete JSON object "
+                "covering every Response label. No markdown fence, preface, or trailing text."
+            )
+        messages = [{"role": "user", "content": base_prompt + retry_suffix}]
+        try:
+            response = await asyncio.wait_for(
+                query_model(
+                    extractor,
+                    messages,
+                    temperature=0.0,
+                    timeout=timeout_val,
+                    max_output_tokens=12288,
+                    conversation_id=f"claim-extraction-{attempt}",
+                ),
+                timeout=timeout_val,
+            )
+        except asyncio.TimeoutError:
+            last_error = f"timed out after {timeout_val:g}s"
+            logger.warning("Claim extraction attempt %d/2 %s", attempt, last_error)
+            continue
+
+        if not response or response.get("error"):
+            last_error = str((response or {}).get("error_message") or "provider returned no result")
+            logger.warning("Claim extraction attempt %d/2 failed: %s", attempt, last_error)
+            continue
+
+        content = str(response.get("content") or "")
+        parsed = extract_json_block(content)
+        normalized, schema_error = normalize_schema(parsed)
+        if normalized is not None:
+            if attempt > 1:
+                logger.info("Claim extraction recovered on structured-output retry")
+            return normalized
+
+        last_error = schema_error
+        logger.warning(
+            "Claim extraction attempt %d/2 returned unusable schema: %s "
+            "(finish_reason=%s, chars=%d)",
+            attempt,
+            schema_error,
+            response.get("finish_reason"),
+            len(content),
         )
-    except asyncio.TimeoutError:
-        logger.warning(f"Claim extraction timed out after {timeout_val}s, falling back to free-form")
-        return None
 
-
-    if not response or response.get("error"):
-        return None
-
-    content = response.get("content", "")
-    result = extract_json_block(content)
-
-    # Validate shape: must be {label: [{id, claim}]}
-    if not isinstance(result, dict):
-        logger.warning("Claim extraction returned non-dict (%s), falling back to free-form", type(result).__name__)
-        return None
-
-    # Normalize keys (strip whitespace, newlines, and outer quotes) to prevent KeyErrors on lookups
-    normalized_result = {}
-    for key, val in result.items():
-        clean_key = str(key).strip().strip('"').strip("'").strip()
-        normalized_result[clean_key] = val
-    result = normalized_result
-
-    # Verify values are lists of dicts with 'id' and 'claim' keys
-    for key, claims in result.items():
-        if not isinstance(claims, list):
-            logger.warning("Claim extraction value for '%s' is not a list, falling back", key)
-            return None
-
-    return result
+    logger.warning("Claim extraction failed after 2 attempts: %s; falling back to free-form", last_error)
+    return None
 
 
 def aggregate_claim_verdicts(
@@ -490,6 +542,7 @@ def _parse_claim_verdicts_from_ranking(
         "consistent with the response",
     )
     verdicts: List[str] = []
+    normalized_reasons: List[str] = []
 
     for claim_id, detail in result.items():
         if not isinstance(detail, dict):
@@ -504,11 +557,29 @@ def _parse_claim_verdicts_from_ranking(
         if any(marker in lowered_reason for marker in boilerplate_markers):
             raise EvaluationError(f"Claim {claim_id} uses non-substantive boilerplate")
         verdicts.append(verdict)
+        normalized_reasons.append(re.sub(r"\s+", " ", lowered_reason).strip(" ."))
 
     if len(verdicts) >= 10:
-        _, count = Counter(verdicts).most_common(1)[0]
-        if count / len(verdicts) > 0.95:
-            raise EvaluationError("Verdict collapse detected (>95% identical claim verdicts)")
+        dominant_verdict, verdict_count = Counter(verdicts).most_common(1)[0]
+        verdict_ratio = verdict_count / len(verdicts)
+        if verdict_ratio > 0.95:
+            # A uniform verdict distribution can be legitimate. Treat it as a
+            # quality diagnostic, not a terminal format failure, when every
+            # claim has a substantive reason and the reasons are not copied.
+            _, reason_count = Counter(normalized_reasons).most_common(1)[0]
+            reason_ratio = reason_count / len(normalized_reasons)
+            if reason_ratio > 0.50:
+                raise EvaluationError(
+                    "Repetitive claim-evaluation reasons detected "
+                    f"({reason_ratio:.0%} identical explanations)"
+                )
+            logger.warning(
+                "Accepted uniform claim verdict distribution: %s on %d/%d claims (%.1f%%)",
+                dominant_verdict,
+                verdict_count,
+                len(verdicts),
+                verdict_ratio * 100,
+            )
 
     return result
 
@@ -800,6 +871,8 @@ async def run_iterative_debate(
             }
 
             stage2_prompt_override = None
+            stage2_output_validator = None
+            stage2_structured_output_recovery = None
 
             if effective_mode == "paragraph":
                 # Build paragraph-annotated responses text
@@ -881,6 +954,29 @@ async def run_iterative_debate(
                         responses_text=responses_text,
                         canonical_claims_text=claims_text,
                     )
+                    expected_claim_ids = [
+                        str(claim.get("id"))
+                        for claims in canonical_claims.values()
+                        for claim in claims
+                        if isinstance(claim, dict) and claim.get("id")
+                    ]
+
+                    def validate_claim_output(text: str) -> Dict[str, Any]:
+                        return {
+                            "claim_verdicts": _parse_claim_verdicts_from_ranking(
+                                text, expected_claim_ids
+                            )
+                        }
+
+                    stage2_output_validator = validate_claim_output
+                    stage2_structured_output_recovery = (
+                        "Return one complete JSON object after the ranking. "
+                        "Use every claim ID exactly once and no unknown IDs: "
+                        f"{', '.join(expected_claim_ids)}. Each value must be an object with "
+                        '"verdict" set to "strong", "weak", or "flawed", and a concrete '
+                        'claim-specific "reason" of at least one substantive sentence. '
+                        "Do not use a markdown fence."
+                    )
 
             yield {"type": "stage2_start", "round": round_num}
             await asyncio.sleep(0.05)
@@ -889,6 +985,8 @@ async def run_iterative_debate(
                 effective_query, stage1_results, search_context, request,
                 prompt_override=stage2_prompt_override,
                 conversation_id=conversation_id,
+                output_validator=stage2_output_validator,
+                structured_output_recovery=stage2_structured_output_recovery,
             ):
                 if isinstance(item, dict) and item.get("type") == "provider_status":
                     yield {**item, "round": round_num}
@@ -908,7 +1006,12 @@ async def run_iterative_debate(
                     yield {"type": "stage2_pause", "data": item, "round": round_num}
                     continue
                 # Post-process: extract and validate mode-specific structured data.
-                if effective_mode == "claim" and item.get("ranking"):
+                if (
+                    effective_mode == "claim"
+                    and item.get("ranking")
+                    and not item.get("error")
+                    and not item.get("claim_verdicts")
+                ):
                     expected_claim_ids = [
                         str(claim.get("id"))
                         for claims in (canonical_claims or {}).values()
@@ -943,9 +1046,29 @@ async def run_iterative_debate(
             if effective_mode == "claim" and canonical_claims:
                 aggregated_verdicts = aggregate_claim_verdicts(stage2_results)
 
+            expected_ranking_size = len(label_to_model)
+            valid_ranking_count = sum(
+                1
+                for result in stage2_results
+                if not result.get("error")
+                and len(result.get("parsed_ranking") or []) == expected_ranking_size
+            )
+            invalid_ranking_count = max(0, len(stage2_results) - valid_ranking_count)
+            ranking_status = (
+                "completed"
+                if stage2_results and invalid_ranking_count == 0
+                else "partial"
+                if valid_ranking_count > 0
+                else "failed"
+            )
+
             stage2_complete_metadata = {
                 "label_to_model": label_to_model,
                 "aggregate_rankings": aggregate_rankings,
+                "critique_mode": effective_mode,
+                "ranking_status": ranking_status,
+                "valid_ranking_count": valid_ranking_count,
+                "invalid_ranking_count": invalid_ranking_count,
             }
             if canonical_claims:
                 stage2_complete_metadata["canonical_claims"] = canonical_claims
@@ -1051,6 +1174,10 @@ async def run_iterative_debate(
         round_metadata = {
             "label_to_model": label_to_model,
             "aggregate_rankings": aggregate_rankings,
+            "critique_mode": effective_mode,
+            "ranking_status": ranking_status if execution_mode in ("chat_ranking", "full") else None,
+            "valid_ranking_count": valid_ranking_count if execution_mode in ("chat_ranking", "full") else 0,
+            "invalid_ranking_count": invalid_ranking_count if execution_mode in ("chat_ranking", "full") else 0,
         }
         if canonical_claims:
             round_metadata["canonical_claims"] = canonical_claims

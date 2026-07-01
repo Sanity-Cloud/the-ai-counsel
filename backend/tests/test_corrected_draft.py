@@ -5,7 +5,9 @@ from backend.corrected_draft import (
     detect_stage4_meta_response,
     estimate_stage4_output_tokens,
     generate_corrected_draft,
+    resolve_stage4_edit_plan_minimum_word_ratio,
     should_use_stage4_edit_plan,
+    stage4_guidance_authorizes_compression,
     validate_corrected_draft,
 )
 
@@ -95,6 +97,30 @@ def test_stage4_edit_plan_is_used_for_substantive_preservation_failures():
     assert should_use_stage4_edit_plan(medium_source, "Draft is too short")
     assert not should_use_stage4_edit_plan(short_source, "Draft is too short")
     assert not should_use_stage4_edit_plan(medium_source, "Model returned a refusal")
+
+
+def test_stage4_compression_guidance_relaxes_only_affirmative_cutting_directives():
+    verdict = "Cut or sharply condense the extended relationship analysis."
+    ratio, authorized = resolve_stage4_edit_plan_minimum_word_ratio(0.85, verdict, "")
+
+    assert stage4_guidance_authorizes_compression(verdict, "") is True
+    assert authorized is True
+    assert ratio == 0.70
+
+    prohibited = "Do not cut, condense, shorten, or remove developed source material."
+    ratio, authorized = resolve_stage4_edit_plan_minimum_word_ratio(0.85, prohibited, "")
+
+    assert stage4_guidance_authorizes_compression(prohibited, "") is False
+    assert authorized is False
+    assert ratio == 0.85
+
+
+def test_stage4_generic_claim_correction_does_not_authorize_structural_compression():
+    corrections = "Remove or qualify the unsupported claim about motive."
+    ratio, authorized = resolve_stage4_edit_plan_minimum_word_ratio(0.85, "", corrections)
+
+    assert authorized is False
+    assert ratio == 0.85
 
 
 def test_validate_corrected_draft_headings_structure():
@@ -242,6 +268,51 @@ async def test_generate_corrected_draft_recovers_long_source_with_exact_edit_pla
     assert "not a replacement document" in calls[0]["prompt_override"].lower()
     assert "EXACT_EDIT_PLAN" in calls[1]["prompt_override"]
     assert calls[1]["max_output_tokens"] <= 12288
+
+
+@pytest.mark.asyncio
+async def test_generate_corrected_draft_allows_adjudicated_condensation():
+    preserved = "keep " * 700
+    target = "diagnostic " * 250
+    ending = "close " * 50
+    replacement = "focused " * 15
+    original = preserved + target + ending
+    edit_plan = (
+        '{"edits":[{"old_text":"'
+        + target.strip()
+        + '","new_text":"'
+        + replacement.strip()
+        + '"}]}'
+    )
+    calls = []
+    responses = ["freeform " * 765, edit_plan]
+
+    async def fake_synthesize(*args, **kwargs):
+        calls.append(kwargs)
+        return {"error": False, "response": responses.pop(0)}
+
+    result = await generate_corrected_draft(
+        synthesize_fn=fake_synthesize,
+        default_template="Source: {original_text}\nCorrections: {corrections_text}",
+        custom_template="",
+        total_rounds=2,
+        original_text=original,
+        verdict_text="The extended diagnostic material dilutes the apology.",
+        corrections_text="Cut the diagnostic section by roughly two-thirds.",
+        conversation_id="authorized-condensation",
+        max_attempts=2,
+    )
+
+    assert result["error"] is False
+    assert result["generation_strategy"] == "exact_edit_plan"
+    assert len(result["failed_response"].split()) == 765
+    assert len(result["response"].split()) == 765
+    assert result["validation"]["compression_authorized"] is True
+    assert result["validation"]["minimum_word_ratio"] == 0.70
+    assert result["validation"]["minimum_required_words"] == 700
+    assert result["validation"]["default_minimum_word_ratio"] == 0.85
+    assert "Minimum acceptable revised word count: 850" in calls[0]["prompt_override"]
+    assert "EXACT_EDIT_PLAN" in calls[1]["prompt_override"]
 
 
 def test_validate_corrected_draft_placeholders():

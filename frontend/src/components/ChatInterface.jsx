@@ -18,6 +18,7 @@ import OperationalStatus from './OperationalStatus';
 import DocumentUpload from './DocumentUpload';
 import './ChatInterface.css';
 import { getShortModelName } from '../utils/modelHelpers';
+import { resolveRoundPresentation } from '../utils/roundState';
 
 function hasStage1Results(msg) {
     return Array.isArray(msg.stage1) && msg.stage1.length > 0;
@@ -518,29 +519,23 @@ function CouncilMessageRenderer({
 }) {
     const [selectedRound, setSelectedRound] = useState(null);
 
-    const hasRounds = Array.isArray(msg.metadata?.rounds) && msg.metadata.rounds.length > 0;
-    const totalRounds = hasRounds
-        ? msg.metadata.rounds.length
-        : (msg.metadata?.debate_rounds_configured || 1);
-    const currentActiveRound = msg.metadata?.current_round || 1;
-
-    const safeSelectedRound = hasRounds ? selectedRound : null;
-
-    const activeRoundNum = safeSelectedRound !== null
-        ? safeSelectedRound
-        : (hasRounds ? msg.metadata.rounds.length : currentActiveRound);
+    const {
+        hasRounds,
+        totalRounds,
+        activeRoundNum,
+        archivedRound,
+    } = resolveRoundPresentation(msg.metadata, selectedRound);
 
     let displayStage1 = msg.stage1;
     let displayStage2 = msg.stage2;
     let displayStage3 = msg.stage3;
     let displayMetadata = msg.metadata || {};
 
-    if (hasRounds && msg.metadata.rounds[activeRoundNum - 1]) {
-        const roundData = msg.metadata.rounds[activeRoundNum - 1];
-        displayStage1 = roundData.stage1;
-        displayStage2 = roundData.stage2;
-        displayStage3 = roundData.stage3;
-        displayMetadata = { ...msg.metadata, ...(roundData.metadata || {}) };
+    if (hasRounds && archivedRound) {
+        displayStage1 = archivedRound.stage1;
+        displayStage2 = archivedRound.stage2;
+        displayStage3 = archivedRound.stage3;
+        displayMetadata = { ...msg.metadata, ...(archivedRound.metadata || {}) };
     }
 
     const showStage1 = msg.loading?.stage1 || (Array.isArray(displayStage1) && displayStage1.length > 0);
@@ -707,6 +702,10 @@ function CouncilMessageRenderer({
                         aggregateRankings={displayMetadata.aggregate_rankings}
                         canonicalClaims={displayMetadata.canonical_claims}
                         aggregateClaimVerdicts={displayMetadata.aggregate_claim_verdicts}
+                        critiqueMode={displayMetadata.critique_mode || msg.metadata?.critique_mode || 'freeform'}
+                        rankingStatus={displayMetadata.ranking_status}
+                        validRankingCount={displayMetadata.valid_ranking_count}
+                        invalidRankingCount={displayMetadata.invalid_ranking_count}
                         startTime={msg.timers?.stage2Start}
                         endTime={msg.timers?.stage2End}
                         onRetryProvider={onRetryProvider}

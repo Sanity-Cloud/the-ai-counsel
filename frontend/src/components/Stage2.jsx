@@ -23,6 +23,26 @@ function looksLikeEvaluatorRefusal(text) {
         'my capabilities are strictly limited to notion workspace operations',
     ].some((marker) => normalized.includes(marker));
 }
+
+function looksLikeAnnotationOnlyOutput(text) {
+    const raw = String(text || '');
+    const normalized = raw.toLowerCase();
+    const hasAnnotations = ['"response"', '"paragraph"', '"verdict"', '"comment"']
+        .every((key) => normalized.includes(key));
+    const hasRanking = /^\s*(?:#{1,6}\s*)?(?:final\s+|overall\s+)?ranking\b/im.test(raw)
+        || /["']ranking["']\s*:\s*\[/i.test(raw);
+    return hasAnnotations && !hasRanking;
+}
+
+function getStage2RequestStatus(item = {}) {
+    const status = getRequestStatus(item);
+    const parsed = Array.isArray(item?.parsed_ranking) ? item.parsed_ranking : [];
+    if (status === 'completed' && parsed.length === 0 && looksLikeAnnotationOnlyOutput(item?.ranking)) {
+        return 'failed';
+    }
+    return status;
+}
+
 function deAnonymizeText(text, labelToModel) {
     if (!labelToModel) return text;
 
@@ -41,7 +61,21 @@ function hexToRgb(hex) {
     return result ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` : '255, 255, 255';
 }
 
-export default function Stage2({ rankings, labelToModel, aggregateRankings, startTime, endTime, canonicalClaims, aggregateClaimVerdicts, onRetryProvider, onFireProvider }) {
+export default function Stage2({
+    rankings,
+    labelToModel,
+    aggregateRankings,
+    startTime,
+    endTime,
+    canonicalClaims,
+    aggregateClaimVerdicts,
+    critiqueMode = 'freeform',
+    rankingStatus,
+    validRankingCount,
+    invalidRankingCount,
+    onRetryProvider,
+    onFireProvider
+}) {
     const [activeTab, setActiveTab] = useState(0);
     const [viewMode, setViewMode] = useState('leaderboard'); // 'leaderboard' or 'heatmap'
     const [isCopied, setIsCopied] = useState(false);
@@ -71,7 +105,7 @@ export default function Stage2({ rankings, labelToModel, aggregateRankings, star
     // Ensure activeTab is within bounds
     const safeActiveTab = Math.min(activeTab, rankings.length - 1);
     const currentRanking = rankings[safeActiveTab] || {};
-    const currentStatus = getRequestStatus(currentRanking);
+    const currentStatus = getStage2RequestStatus(currentRanking);
     const hasError = currentStatus === 'failed' || currentStatus === 'unaccounted';
 
     // Get visuals for current tab
@@ -85,6 +119,39 @@ export default function Stage2({ rankings, labelToModel, aggregateRankings, star
         : 'Response A, Response B, etc.';
 
     const isClaimMode = !!(canonicalClaims && aggregateClaimVerdicts);
+    const normalizedCritiqueMode = critiqueMode || (isClaimMode ? 'claim' : 'freeform');
+    const stageTitle = normalizedCritiqueMode === 'paragraph'
+        ? 'Stage 2: Paragraph Critique & Rankings'
+        : normalizedCritiqueMode === 'claim'
+            ? 'Stage 2: Claim Audit & Rankings'
+            : 'Stage 2: Peer Rankings';
+    const stageDescription = normalizedCritiqueMode === 'paragraph'
+        ? `Each model reviewed numbered paragraphs and was required to return a complete ranking of ${anonymizedLabelText}.`
+        : normalizedCritiqueMode === 'claim'
+            ? `Each model audited the canonical claims and was required to rank ${anonymizedLabelText}.`
+            : `Each model evaluated all responses and was required to rank ${anonymizedLabelText}.`;
+    const expectedRankingSize = labelToModel ? Object.keys(labelToModel).length : 0;
+    const derivedValidRankingCount = rankings.filter((item) => {
+        const parsed = Array.isArray(item?.parsed_ranking) ? item.parsed_ranking : [];
+        return !item?.error && parsed.length > 0
+            && (expectedRankingSize === 0 || parsed.length === expectedRankingSize);
+    }).length;
+    const effectiveValidRankingCount = Number.isInteger(validRankingCount)
+        ? validRankingCount
+        : derivedValidRankingCount;
+    const effectiveInvalidRankingCount = Number.isInteger(invalidRankingCount)
+        ? invalidRankingCount
+        : Math.max(0, rankings.length - effectiveValidRankingCount);
+    const allTerminal = rankings.every((item) => !['queued', 'running', 'paused'].includes(getStage2RequestStatus(item)));
+    const effectiveRankingStatus = rankingStatus || (
+        !allTerminal
+            ? 'running'
+            : effectiveValidRankingCount === 0
+                ? 'failed'
+                : effectiveInvalidRankingCount > 0
+                    ? 'partial'
+                    : 'completed'
+    );
 
     const handleCopy = async () => {
         const ranking = currentRanking?.ranking;
@@ -105,10 +172,24 @@ export default function Stage2({ rankings, labelToModel, aggregateRankings, star
             <div className="stage-header">
                 <div className="stage-title">
                     <span className="stage-icon">⚖️</span>
-                    Stage 2: Peer Rankings
+                    {stageTitle}
                 </div>
                 <StageTimer startTime={startTime} endTime={endTime} label="Duration" />
             </div>
+
+            {effectiveRankingStatus === 'failed' && (
+                <div className="stage2-ranking-alert stage2-ranking-alert--error" role="alert">
+                    <strong>No valid peer rankings were produced.</strong>
+                    <span>Annotation-only evaluator output is excluded from ranking aggregation.</span>
+                </div>
+            )}
+
+            {effectiveRankingStatus === 'partial' && (
+                <div className="stage2-ranking-alert stage2-ranking-alert--warning" role="status">
+                    <strong>Stage 2 completed with partial ranking coverage.</strong>
+                    <span>{effectiveValidRankingCount} accepted; {effectiveInvalidRankingCount} rejected.</span>
+                </div>
+            )}
 
             {/* Claim Mode: show ClaimCards as the primary view */}
             {isClaimMode && (
@@ -148,8 +229,7 @@ export default function Stage2({ rankings, labelToModel, aggregateRankings, star
                 <>
                     <h4>Raw Evaluations</h4>
                     <p className="stage-description">
-                        Each model evaluated all responses (anonymized as {anonymizedLabelText}) and provided rankings.
-                        Below, model names are shown in <strong>bold</strong> for readability, but the original evaluation used anonymous labels.
+                        {stageDescription} Below, model names are shown in <strong>bold</strong> for readability, but the original evaluation used anonymous labels.
                     </p>
                     <RawEvaluationTabs
                         rankings={rankings}
@@ -338,11 +418,21 @@ function RawEvaluationTabs({
     onRetryProvider,
     onFireProvider
 }) {
-    const currentStatus = getRequestStatus(currentRanking);
-    const isRankingFormatError = ['invalid_evaluator_output', 'truncated_evaluator_output'].includes(currentRanking?.status);
-    const isTruncatedEvaluatorOutput = currentRanking?.status === 'truncated_evaluator_output';
-    const isProviderError = currentRanking?.status === 'provider_error';
-    const isEvaluatorRefusal = currentRanking?.status === 'evaluator_refused'
+    const currentStatus = getStage2RequestStatus(currentRanking);
+    const resultStatus = currentRanking?.result_status
+        || (looksLikeAnnotationOnlyOutput(currentRanking?.ranking)
+            ? 'annotation_only_evaluator_output'
+            : currentRanking?.status);
+    const isAnnotationOnlyOutput = resultStatus === 'annotation_only_evaluator_output';
+    const isRankingFormatError = [
+        'invalid_evaluator_output',
+        'annotation_only_evaluator_output',
+        'truncated_evaluator_output'
+    ].includes(resultStatus);
+    const isTruncatedEvaluatorOutput = resultStatus === 'truncated_evaluator_output';
+    const isStructuredEvaluationError = resultStatus === 'invalid_structured_evaluator_output';
+    const isProviderError = resultStatus === 'provider_error';
+    const isEvaluatorRefusal = resultStatus === 'evaluator_refused'
         || looksLikeEvaluatorRefusal(currentRanking?.ranking);
 
     return (
@@ -352,7 +442,7 @@ function RawEvaluationTabs({
                 {rankings.map((rank, index) => {
                     const visuals = getModelVisuals(rank?.model);
                     const shortName = getShortModelName(rank?.model);
-                    const status = getRequestStatus(rank);
+                    const status = getStage2RequestStatus(rank);
                     const statusError = status === 'failed' || status === 'unaccounted';
 
                     return (
@@ -460,18 +550,22 @@ function RawEvaluationTabs({
                                         ? 'Request Result Missing'
                                         : isEvaluatorRefusal
                                             ? 'Evaluator Refused Task'
-                                            : isTruncatedEvaluatorOutput
-                                                ? 'Evaluator Output Truncated'
-                                                : isRankingFormatError
-                                                    ? 'Ranking Missing or Unparseable'
-                                                    : isProviderError
+                                            : isAnnotationOnlyOutput
+                                                ? 'Annotations Returned Without Ranking'
+                                                : isTruncatedEvaluatorOutput
+                                                    ? 'Evaluator Output Truncated'
+                                                    : isStructuredEvaluationError
+                                                        ? 'Claim Evaluation Missing or Invalid'
+                                                        : isRankingFormatError
+                                                            ? 'Ranking Missing or Unparseable'
+                                                        : isProviderError
                                                         ? 'Provider Request Failed'
                                                         : 'Ranking Request Failed'}
                                 </div>
                                 <div className="error-message">{currentRanking?.error_message || 'Unknown error'}</div>
                             </div>
                         </div>
-                        {(isRankingFormatError || isEvaluatorRefusal) && currentRanking?.ranking && (
+                        {(isRankingFormatError || isStructuredEvaluationError || isEvaluatorRefusal) && currentRanking?.ranking && (
                             <details className="raw-evaluations-collapse">
                                 <summary className="raw-evaluations-toggle">Show unparsed model response</summary>
                                 <MarkdownContent className="ranking-content">

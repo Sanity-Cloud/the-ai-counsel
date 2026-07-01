@@ -59,6 +59,10 @@ async def test_two_rounds_yields_correct_events(mock_settings):
 
         dc = next(e for e in events if e["type"] == "debate_complete")
         assert len(dc["rounds"]) == 2
+        for round_data in dc["rounds"]:
+            assert round_data["metadata"]["ranking_status"] == "completed"
+            assert round_data["metadata"]["valid_ranking_count"] == 2
+            assert round_data["metadata"]["invalid_ranking_count"] == 0
 
 
 @pytest.mark.asyncio

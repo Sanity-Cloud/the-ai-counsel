@@ -988,7 +988,31 @@ async def send_message_stream(conversation_id: str, body: SendMessageRequest, re
                     await asyncio.sleep(0.01)
 
                 aggregate_rankings = calculate_aggregate_rankings(stage2_results, label_to_model)
-                yield f"data: {json.dumps({'type': 'stage2_complete', 'data': stage2_results, 'metadata': {'label_to_model': label_to_model, 'aggregate_rankings': aggregate_rankings, 'search_query': search_query, 'search_context': search_context}})}\n\n"
+                expected_ranking_size = len(label_to_model)
+                valid_ranking_count = sum(
+                    1
+                    for result in stage2_results
+                    if not result.get("error")
+                    and len(result.get("parsed_ranking") or []) == expected_ranking_size
+                )
+                invalid_ranking_count = max(0, len(stage2_results) - valid_ranking_count)
+                ranking_status = (
+                    "completed"
+                    if stage2_results and invalid_ranking_count == 0
+                    else "partial"
+                    if valid_ranking_count > 0
+                    else "failed"
+                )
+                stage2_metadata = {
+                    "label_to_model": label_to_model,
+                    "aggregate_rankings": aggregate_rankings,
+                    "search_query": search_query,
+                    "search_context": search_context,
+                    "ranking_status": ranking_status,
+                    "valid_ranking_count": valid_ranking_count,
+                    "invalid_ranking_count": invalid_ranking_count,
+                }
+                yield f"data: {json.dumps({'type': 'stage2_complete', 'data': stage2_results, 'metadata': stage2_metadata})}\n\n"
                 await asyncio.sleep(0.05)
 
             # Stage 3: Only if mode is 'full'

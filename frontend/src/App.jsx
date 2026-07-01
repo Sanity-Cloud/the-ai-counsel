@@ -6,6 +6,7 @@ import './components/StageCopyButtons.css';
 import './ModeToggle.css';
 import { auditEventReducer } from './state/auditEventReducer';
 import { markTerminalResult, reconcileTerminalResults } from './utils/requestStatus';
+import { buildRoundStartMetadata } from './utils/roundState';
 
 const ChatInterface = lazy(() => import('./components/ChatInterface'));
 const Settings = lazy(() => import('./components/Settings'));
@@ -1404,11 +1405,19 @@ function App() {
                   ...lastMsg,
                   stage1: round > 1 ? null : lastMsg.stage1,
                   stage2: round > 1 ? null : lastMsg.stage2,
+                  stage2a: round > 1 ? null : lastMsg.stage2a,
+                  stage2b: round > 1 ? null : lastMsg.stage2b,
+                  stage2c: round > 1 ? null : lastMsg.stage2c,
                   stage3: round > 1 ? null : lastMsg.stage3,
+                  progress: round > 1 ? {} : lastMsg.progress,
                   loading: {
                     ...lastMsg.loading,
                     stage1: false,
+                    claimDecomposition: false,
                     stage2: false,
+                    stage2a: false,
+                    stage2b: false,
+                    stage2c: false,
                     stage3: false,
                     stage4: false,
                   },
@@ -1416,16 +1425,24 @@ function App() {
                     ...lastMsg.timers,
                     stage1Start: round > 1 ? null : lastMsg.timers?.stage1Start,
                     stage1End: round > 1 ? null : lastMsg.timers?.stage1End,
+                    claimDecompositionStart: round > 1 ? null : lastMsg.timers?.claimDecompositionStart,
+                    claimDecompositionEnd: round > 1 ? null : lastMsg.timers?.claimDecompositionEnd,
                     stage2Start: round > 1 ? null : lastMsg.timers?.stage2Start,
                     stage2End: round > 1 ? null : lastMsg.timers?.stage2End,
+                    stage2aStart: round > 1 ? null : lastMsg.timers?.stage2aStart,
+                    stage2aEnd: round > 1 ? null : lastMsg.timers?.stage2aEnd,
+                    stage2bStart: round > 1 ? null : lastMsg.timers?.stage2bStart,
+                    stage2bEnd: round > 1 ? null : lastMsg.timers?.stage2bEnd,
+                    stage2cStart: round > 1 ? null : lastMsg.timers?.stage2cStart,
+                    stage2cEnd: round > 1 ? null : lastMsg.timers?.stage2cEnd,
                     stage3Start: round > 1 ? null : lastMsg.timers?.stage3Start,
                     stage3End: round > 1 ? null : lastMsg.timers?.stage3End,
                   },
-                  metadata: {
-                    ...lastMsg.metadata,
-                    current_round: round,
-                    debate_rounds_configured: event.total_rounds,
-                  }
+                  metadata: buildRoundStartMetadata(
+                    lastMsg.metadata,
+                    round,
+                    event.total_rounds,
+                  ),
                 };
 
                 messages[messages.length - 1] = updatedLastMsg;
@@ -1448,6 +1465,10 @@ function App() {
                     aggregate_rankings: lastMsg.metadata?.aggregate_rankings,
                     canonical_claims: lastMsg.metadata?.canonical_claims,
                     aggregate_claim_verdicts: lastMsg.metadata?.aggregate_claim_verdicts,
+                    critique_mode: lastMsg.metadata?.critique_mode,
+                    ranking_status: lastMsg.metadata?.ranking_status,
+                    valid_ranking_count: lastMsg.metadata?.valid_ranking_count,
+                    invalid_ranking_count: lastMsg.metadata?.invalid_ranking_count,
                     cost_report: lastMsg.metadata?.cost_report,
                   }
                 };

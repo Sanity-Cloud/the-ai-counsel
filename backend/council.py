@@ -1,6 +1,6 @@
 """3-stage LLM Council orchestration."""
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Callable
 import asyncio
 import logging
 import random
@@ -53,6 +53,24 @@ def is_evaluator_refusal(text: str) -> bool:
         "do not have the ability to evaluate",
     )
     return any(term in normalized for term in refusal_terms) and "response" in normalized
+
+
+def is_annotation_only_evaluator_output(text: str) -> bool:
+    """Detect paragraph-verdict JSON that omitted the mandatory peer ranking."""
+    raw = str(text or "")
+    normalized = raw.casefold()
+    annotation_keys = (
+        '"response"',
+        '"paragraph"',
+        '"verdict"',
+        '"comment"',
+    )
+    has_annotations = all(key in normalized for key in annotation_keys)
+    has_ranking_contract = bool(
+        re.search(r"(?im)^\s*(?:#{1,6}\s*)?(?:final\s+|overall\s+)?ranking\b", raw)
+        or re.search(r"(?is)[\"']ranking[\"']\s*:\s*\[", raw)
+    )
+    return has_annotations and not has_ranking_contract
 
 
 _NOTION_COUNCIL_LOCK: asyncio.Lock | None = None
@@ -381,23 +399,54 @@ def response_was_truncated(response: Dict[str, Any] | None) -> bool:
     return finish_reason in _STAGE2_TRUNCATION_REASONS
 
 
+def _strip_stage2_output_contract(prompt: str) -> str:
+    """Remove stale output-format instructions while preserving the evaluation task."""
+    cleaned = str(prompt or "")
+    cleaned = cleaned.split("\n\nCRITICAL OUTPUT CONTRACT:", 1)[0]
+    cleaned = re.split(
+        r"\n\s*Respond with valid JSON followed by your ranking\s*:\s*",
+        cleaned,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+    return cleaned.rstrip()
+
+
 def build_stage2_recovery_prompt(
     original_prompt: str,
     valid_labels: List[str],
     parse_error: str,
+    structured_output_instructions: Optional[str] = None,
 ) -> str:
-    """Build a compact retry prompt that cannot exhaust output before the ranking."""
+    """Build a deterministic retry prompt without conflicting prior contracts."""
+    task_prompt = _strip_stage2_output_contract(original_prompt)
+    allowed_labels = ", ".join(valid_labels)
     numbered_slots = "\n".join(
         f"{index}. <one unused allowed Response label>"
         for index in range(1, len(valid_labels) + 1)
     )
+    structured_suffix = ""
+    if structured_output_instructions:
+        return_instruction = (
+            "Return the complete ranking block first, with every allowed label exactly once.\n"
+        )
+        structured_suffix = (
+            "\nAfter the ranking block, return the required structured evaluation exactly as follows:\n"
+            f"{structured_output_instructions.strip()}"
+        )
+    else:
+        return_instruction = (
+            "Return ONLY the complete ranking block below, with every allowed label exactly once.\n"
+        )
     return (
-        f"{original_prompt}\n\n"
-        "RECOVERY RETRY: The previous answer was received but its ranking could not be "
-        f"parsed ({parse_error}). Do not repeat the paragraph audit or any explanation. "
-        "Return ONLY the complete ranking block below, with every allowed label exactly once.\n"
+        f"{task_prompt}\n\n"
+        "RECOVERY RETRY: The previous answer was received but failed validation "
+        f"({parse_error}). Do not include analysis, a preface, or commentary. "
+        f"Allowed labels: {allowed_labels}. Use each exactly once and no others. "
+        f"{return_instruction}"
         "FINAL RANKING:\n"
         f"{numbered_slots}"
+        f"{structured_suffix}"
     )
 
 
@@ -451,11 +500,14 @@ def build_stage2_result(
             }
         except EvaluationError as exc:
             evaluator_refused = is_evaluator_refusal(full_text)
+            annotation_only = is_annotation_only_evaluator_output(full_text)
             status = (
                 "evaluator_refused"
                 if evaluator_refused
                 else "truncated_evaluator_output"
                 if truncated
+                else "annotation_only_evaluator_output"
+                if annotation_only
                 else "invalid_evaluator_output"
             )
             if evaluator_refused:
@@ -464,6 +516,11 @@ def build_stage2_result(
                 message = (
                     "Evaluator output ended before a complete ranking could be parsed. "
                     f"Provider finish reason: {finish_reason or 'stream interruption'}."
+                )
+            elif annotation_only:
+                message = (
+                    "Evaluator returned paragraph annotations but omitted the required complete "
+                    "peer ranking. Annotation-only output is not a valid Stage 2 ranking."
                 )
             else:
                 message = str(exc)
@@ -857,6 +914,8 @@ async def stage2_collect_rankings(
     request: Any = None,
     prompt_override: "str | None" = None,
     conversation_id: "str | None" = None,
+    output_validator: "Optional[Callable[[str], Dict[str, Any]]]" = None,
+    structured_output_recovery: "str | None" = None,
 ) -> Any: # Returns an async generator
     """
     Stage 2: Collect peer rankings from all council models.
@@ -987,6 +1046,17 @@ async def stage2_collect_rankings(
                 valid_labels=valid_labels,
                 expected_count=expected_count,
             )
+            if result.get("error") is None and output_validator:
+                try:
+                    validated_fields = output_validator(result.get("ranking", ""))
+                    if validated_fields:
+                        result.update(validated_fields)
+                except EvaluationError as exc:
+                    result["error"] = True
+                    result["status"] = "invalid_structured_evaluator_output"
+                    result["error_message"] = f"Invalid structured evaluation: {exc}"
+                    result["parse_error"] = str(exc)
+
             attempt_record = {
                 "attempt": attempt,
                 "status": result.get("status", "completed"),
@@ -999,6 +1069,8 @@ async def stage2_collect_rankings(
 
             retryable_format_failure = result.get("status") in {
                 "invalid_evaluator_output",
+                "invalid_structured_evaluator_output",
+                "annotation_only_evaluator_output",
                 "truncated_evaluator_output",
             }
             if retryable_format_failure:
@@ -1012,6 +1084,7 @@ async def stage2_collect_rankings(
                         ranking_prompt,
                         valid_labels,
                         result.get("parse_error") or result.get("error_message") or "missing ranking",
+                        structured_output_instructions=structured_output_recovery,
                     ),
                 }]
                 continue

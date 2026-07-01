@@ -245,6 +245,103 @@ def get_provider_for_model(model_id: str) -> Any:
     return PROVIDERS["openrouter"]
 
 
+_STAGE2_MODEL_ALIAS_CACHE: Dict[str, List[str]] = {}
+
+
+def _normalize_model_alias(value: str) -> str:
+    """Normalize display-name drift such as ``GPT-5.5`` vs ``GPT 5.5``."""
+    return "".join(character for character in str(value or "").casefold() if character.isalnum())
+
+
+def _metadata_aliases(model: Dict[str, Any]) -> List[str]:
+    """Extract user-visible and transport aliases from provider model metadata."""
+    aliases = set()
+    for key in ("id", "canonical_id", "display_name", "name", "public_name", "model_family"):
+        value = str(model.get(key) or "").strip()
+        if value:
+            aliases.add(value)
+            aliases.add(re.sub(r"\s*\[[^]]+\]\s*$", "", value).strip())
+
+    raw_aliases = model.get("aliases")
+    if isinstance(raw_aliases, list):
+        aliases.update(str(alias).strip() for alias in raw_aliases if str(alias).strip())
+
+    expanded = set(aliases)
+    for alias in aliases:
+        if ":" in alias:
+            expanded.add(alias.split(":", 1)[1])
+        for prefix in ("claude ", "openai ", "google ", "xai "):
+            if alias.casefold().startswith(prefix):
+                expanded.add(alias[len(prefix):].strip())
+    return sorted(alias for alias in expanded if alias)
+
+
+async def build_stage2_label_aliases(label_to_model: Dict[str, str]) -> Dict[str, List[str]]:
+    """Resolve each anonymized response label to accepted model-name aliases.
+
+    Evaluators are instructed to rank anonymous labels, but some providers still
+    emit the visible model names. Provider metadata is the authoritative bridge
+    from opaque model IDs (for example Notion2API transport IDs) back to those
+    visible names. Failures here are non-fatal; canonical IDs remain available.
+    """
+    aliases_by_label: Dict[str, set[str]] = {}
+    labels_by_provider: Dict[Any, List[tuple[str, str]]] = {}
+
+    for label, model_id in label_to_model.items():
+        model_text = str(model_id or "").strip()
+        base_aliases = {model_text}
+        if ":" in model_text:
+            base_aliases.add(model_text.split(":", 1)[1])
+        cached_aliases = _STAGE2_MODEL_ALIAS_CACHE.get(model_text.casefold(), [])
+        base_aliases.update(cached_aliases)
+        aliases_by_label[label] = {alias for alias in base_aliases if alias}
+        if not cached_aliases:
+            labels_by_provider.setdefault(get_provider_for_model(model_text), []).append((label, model_text))
+
+    async def fetch_provider_models(provider: Any) -> tuple[Any, List[Dict[str, Any]]]:
+        try:
+            models = await provider.get_models()
+            return provider, models if isinstance(models, list) else []
+        except Exception as exc:
+            logger.warning("Unable to load model aliases for Stage 2 recovery: %s", exc)
+            return provider, []
+
+    provider_results = await asyncio.gather(
+        *(fetch_provider_models(provider) for provider in labels_by_provider),
+    )
+    for provider, models in provider_results:
+        requested = labels_by_provider.get(provider, [])
+        for label, model_id in requested:
+            target_full = model_id.casefold()
+            target_suffix = model_id.split(":", 1)[-1].casefold()
+            for metadata in models:
+                metadata_ids = {
+                    str(metadata.get("id") or "").strip().casefold(),
+                    str(metadata.get("canonical_id") or "").strip().casefold(),
+                }
+                metadata_suffixes = {value.split(":", 1)[-1] for value in metadata_ids if value}
+                metadata_alias_ids = {
+                    str(alias).strip().casefold()
+                    for alias in (metadata.get("aliases") or [])
+                    if str(alias).strip()
+                } if isinstance(metadata.get("aliases"), list) else set()
+                if not (
+                    target_full in metadata_ids
+                    or target_suffix in metadata_suffixes
+                    or target_suffix in metadata_alias_ids
+                ):
+                    continue
+                resolved_aliases = _metadata_aliases(metadata)
+                aliases_by_label[label].update(resolved_aliases)
+                _STAGE2_MODEL_ALIAS_CACHE[model_id.casefold()] = resolved_aliases
+                break
+
+    return {
+        label: sorted(aliases)
+        for label, aliases in aliases_by_label.items()
+    }
+
+
 async def _query_model_raw(
     model: str,
     messages: List[Dict[str, str]],
@@ -456,6 +553,7 @@ def build_stage2_result(
     valid_labels: List[str],
     expected_count: int,
     attempts: Optional[List[Dict[str, Any]]] = None,
+    label_aliases: Optional[Dict[str, List[str]]] = None,
 ) -> Dict[str, Any]:
     """Classify a Stage 2 provider result without conflating parse failure with no response."""
     response = response if isinstance(response, dict) else {
@@ -486,6 +584,7 @@ def build_stage2_result(
                 full_text,
                 expected_count=expected_count,
                 valid_labels=valid_labels,
+                label_aliases=label_aliases,
             )
             result = {
                 "model": model,
@@ -1015,6 +1114,7 @@ async def stage2_collect_rankings(
 
     valid_labels = list(label_to_model.keys())
     expected_count = len(successful_results)
+    label_aliases = await build_stage2_label_aliases(label_to_model)
 
     async def _query_safe(m: str):
         attempt_messages = messages
@@ -1045,6 +1145,7 @@ async def stage2_collect_rankings(
                 response,
                 valid_labels=valid_labels,
                 expected_count=expected_count,
+                label_aliases=label_aliases,
             )
             if result.get("error") is None and output_validator:
                 try:
@@ -1102,6 +1203,7 @@ async def stage2_collect_rankings(
             valid_labels=valid_labels,
             expected_count=expected_count,
             attempts=attempts_ledger,
+            label_aliases=label_aliases,
         )
 
     from .main import _active_runs
@@ -1428,13 +1530,14 @@ def parse_ranking_from_text(
     ranking_text: str,
     expected_count: int = None,
     valid_labels: List[str] = None,
+    label_aliases: Optional[Dict[str, List[str]]] = None,
 ) -> List[str]:
     """Parse a Stage 2 ranking without treating harmless formatting drift as failure.
 
     The preferred contract is a ``FINAL RANKING:`` heading followed by a numbered
-    list.  The recovery paths below accept common markdown, heading, inline-order,
-    and ranking-only-tail variants, but only when they produce an unambiguous set
-    of the expected anonymized labels.
+    list of anonymized response labels. Recovery also accepts provider display
+    names when ``label_aliases`` maps those names back to the current anonymous
+    labels. A complete, unique, exact set is still required.
     """
     import re
 
@@ -1470,9 +1573,69 @@ def parse_ranking_from_text(
             raise EvaluationError("No valid response labels found in the ranking.")
         return filtered
 
+    alias_candidates: Dict[str, set[str]] = {}
+    for label in valid_labels:
+        aliases = [label]
+        if label_aliases:
+            aliases.extend(label_aliases.get(label, []))
+        for alias in aliases:
+            normalized = _normalize_model_alias(alias)
+            if normalized:
+                alias_candidates.setdefault(normalized, set()).add(label)
+    alias_lookup = {
+        alias: next(iter(labels))
+        for alias, labels in alias_candidates.items()
+        if len(labels) == 1
+    }
+
+    ranking_prefix_pattern = re.compile(r"^\s*(?:\d+\s*[.):-]|[-*\u2022])\s*")
+
+    def clean_ranking_entry(line: str) -> str:
+        candidate = ranking_prefix_pattern.sub("", str(line or "").strip())
+        candidate = re.sub(r"^(?:\*\*|__|`)+", "", candidate)
+        candidate = re.sub(r"(?:\*\*|__|`)+$", "", candidate)
+        return candidate.strip()
+
+    def resolve_alias_entry(line: str) -> Optional[str]:
+        return alias_lookup.get(_normalize_model_alias(clean_ranking_entry(line)))
+
+    def parse_alias_section(section: str) -> List[str]:
+        resolved: List[str] = []
+        for raw_line in section.splitlines():
+            stripped = raw_line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith(("{", "[")) and resolved:
+                break
+
+            label = resolve_alias_entry(raw_line)
+            if label:
+                if label in resolved:
+                    raise EvaluationError(f"Duplicate ranked model name resolves to {label}.")
+                resolved.append(label)
+                if expected_count and len(resolved) == expected_count:
+                    return validate(resolved)
+                continue
+
+            if resolved:
+                candidate = clean_ranking_entry(raw_line)
+                looks_like_rank_item = bool(ranking_prefix_pattern.match(raw_line))
+                looks_like_plain_name = (
+                    len(candidate) <= 100
+                    and len(candidate.split()) <= 8
+                    and not re.search(r"[:{}]", candidate)
+                )
+                if looks_like_rank_item or looks_like_plain_name:
+                    raise EvaluationError(
+                        f"Unknown or ambiguous model name in ranking: {candidate}."
+                    )
+                break
+
+        return validate(resolved) if resolved else []
+
     label_pattern = r"Response\s+[A-Z]"
     line_pattern = re.compile(
-        rf"^\s*(?:\d+\s*[.):-]|[-*•])\s*(?:\*\*|__)?({label_pattern})(?:\*\*|__)?\b",
+        rf"^\s*(?:\d+\s*[.):-]|[-*\u2022])\s*(?:\*\*|__)?({label_pattern})(?:\*\*|__)?\b",
         re.IGNORECASE,
     )
     heading_pattern = re.compile(
@@ -1491,6 +1654,9 @@ def parse_ranking_from_text(
         ]
         if matches:
             return validate(matches)
+        alias_matches = parse_alias_section(ranking_section)
+        if alias_matches:
+            return alias_matches
 
     # Common single-line form: "Final ranking: Response B > Response A".
     inline_pattern = re.compile(
@@ -1502,9 +1668,17 @@ def parse_ranking_from_text(
         inline_labels = re.findall(label_pattern, inline_text, flags=re.IGNORECASE)
         if inline_labels and (
             len(inline_labels) == 1
-            or re.search(r"(?:>|→|⇒|,|;|\bthen\b)", inline_text, flags=re.IGNORECASE)
+            or re.search(r"(?:>|\u2192|\u21d2|,|;|\bthen\b)", inline_text, flags=re.IGNORECASE)
         ):
             return validate(inline_labels)
+
+        if re.search(r"(?:>|\u2192|\u21d2|,|;|\bthen\b)", inline_text, flags=re.IGNORECASE):
+            parts = re.split(r"\s*(?:>|\u2192|\u21d2|,|;|\bthen\b)\s*", inline_text, flags=re.IGNORECASE)
+            resolved = [resolve_alias_entry(part) for part in parts if part.strip()]
+            if resolved and all(resolved):
+                if len(set(resolved)) != len(resolved):
+                    raise EvaluationError("Duplicate model names found in ranking.")
+                return validate(resolved)
 
     # Structured-output variant: {"ranking": ["Response B", "Response A"]}.
     json_match = re.search(
@@ -1515,18 +1689,39 @@ def parse_ranking_from_text(
         json_labels = re.findall(label_pattern, json_match.group(1), flags=re.IGNORECASE)
         if json_labels:
             return validate(json_labels)
+        quoted_items = re.findall(r"[\"']([^\"']+)[\"']", json_match.group(1))
+        resolved = [resolve_alias_entry(item) for item in quoted_items]
+        if resolved and all(resolved):
+            if len(set(resolved)) != len(resolved):
+                raise EvaluationError("Duplicate model names found in ranking array.")
+            return validate(resolved)
 
-    # Last-resort recovery for a ranking-only tail with no heading.  Limiting the
+    # Last-resort recovery for a ranking-only tail with no heading. Limiting the
     # scan to consecutive trailing ranking lines avoids mistaking the evaluator's
     # earlier per-response discussion for rank order.
+    nonempty_lines = [line for line in ranking_text.splitlines() if line.strip()]
     trailing_matches = []
-    for line in reversed([line for line in ranking_text.splitlines() if line.strip()]):
+    for line in reversed(nonempty_lines):
         match = line_pattern.match(line)
         if not match:
             break
         trailing_matches.append(match.group(1))
     if trailing_matches:
         return validate(list(reversed(trailing_matches)))
+
+    trailing_aliases = []
+    for line in reversed(nonempty_lines):
+        if not ranking_prefix_pattern.match(line):
+            break
+        label = resolve_alias_entry(line)
+        if not label:
+            break
+        trailing_aliases.append(label)
+    if trailing_aliases:
+        resolved = list(reversed(trailing_aliases))
+        if len(set(resolved)) != len(resolved):
+            raise EvaluationError("Duplicate model names found in ranking tail.")
+        return validate(resolved)
 
     raise EvaluationError(
         "No unambiguous ranking found. End the response with FINAL RANKING: "

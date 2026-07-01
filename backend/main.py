@@ -3227,6 +3227,7 @@ async def retry_failed_provider(conversation_id: str, body: RetryRequest):
             STAGE2_FORMAT_RETRY_ATTEMPTS,
             STAGE2_MAX_OUTPUT_TOKENS_DEFAULT,
             _query_model_gated,
+            build_stage2_label_aliases,
             build_stage2_recovery_prompt,
             build_stage2_result,
         )
@@ -3244,6 +3245,7 @@ async def retry_failed_provider(conversation_id: str, body: RetryRequest):
         stage2_max_output_tokens = max(4096, min(stage2_max_output_tokens, 32768))
 
         valid_labels = list(label_to_model.keys())
+        label_aliases = await build_stage2_label_aliases(label_to_model)
         attempt_messages = messages
         attempts_ledger = []
         new_result = None
@@ -3267,6 +3269,7 @@ async def retry_failed_provider(conversation_id: str, body: RetryRequest):
                 response,
                 valid_labels=valid_labels,
                 expected_count=len(successful_results),
+                label_aliases=label_aliases,
             )
             retryable_format_failure = classified.get("status") in {
                 "invalid_evaluator_output",
@@ -3305,6 +3308,7 @@ async def retry_failed_provider(conversation_id: str, body: RetryRequest):
                 {"error": True, "error_message": "Stage 2 manual retry ended without a terminal result."},
                 valid_labels=valid_labels,
                 expected_count=len(successful_results),
+                label_aliases=label_aliases,
             )
 
         responses = run_info.get("stage2_responses", [])
@@ -3514,7 +3518,14 @@ async def fire_pending_provider(conversation_id: str, body: FireRequest):
         ranking_prompt = apply_response_language(ranking_prompt, settings.response_language)
         messages = [{"role": "user", "content": ranking_prompt}]
 
-        from .council import EvaluationError, _query_model_gated, parse_ranking_from_text, strip_thinking_blocks
+        from .council import (
+            EvaluationError,
+            _query_model_gated,
+            build_stage2_label_aliases,
+            parse_ranking_from_text,
+            strip_thinking_blocks,
+        )
+        label_aliases = await build_stage2_label_aliases(label_to_model)
         model_timeout = getattr(settings, "model_timeout_seconds", 300)
         if run_info.get("continuation_mode") == "conservative":
             model_timeout = model_timeout * 2
@@ -3550,7 +3561,8 @@ async def fire_pending_provider(conversation_id: str, body: FireRequest):
                 parsed = parse_ranking_from_text(
                     full_text,
                     expected_count=len(successful_results),
-                    valid_labels=list(label_to_model.keys())
+                    valid_labels=list(label_to_model.keys()),
+                    label_aliases=label_aliases,
                 )
                 new_result = {
                     "model": model_id,

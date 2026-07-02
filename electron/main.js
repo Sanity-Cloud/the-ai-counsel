@@ -30,6 +30,7 @@ let tray;
 let backendProcess;
 let frontendProcess;
 let providerProcess;
+let providerStartPromise;
 let stackStartPromise;
 let isQuitting = false;
 
@@ -314,6 +315,14 @@ function startProvider(settings = {}) {
 
 
 async function stopProvider() {
+  const pendingStart = providerStartPromise;
+  if (pendingStart) {
+    try {
+      await pendingStart;
+    } catch (error) {
+      log(`Notion2API start failed before stop: ${error.message}`);
+    }
+  }
   const child = providerProcess;
   providerProcess = null;
   await stopProcess(child, 'notion2api');
@@ -329,14 +338,27 @@ async function waitForManagedStatus(timeoutMs = 45000) {
   throw new Error('Timed out waiting for Notion2API status');
 }
 
+function ensureProviderStarted(settings) {
+  if (!providerStartPromise) {
+    providerStartPromise = (async () => {
+      const status = await getManagedStatus();
+      if (status.running) {
+        log(`Notion2API already running (${status.model_count || 0} models)`);
+        return null;
+      }
+      const child = startProvider(settings);
+      await waitForManagedStatus(45000);
+      return child;
+    })().finally(() => {
+      providerStartPromise = null;
+    });
+  }
+  return providerStartPromise;
+}
+
 async function startProviderFromMenu() {
   const settings = await getJson(`${BACKEND_URL}/api/settings`, 5000);
-  const status = await getManagedStatus();
-  if (status.running) {
-    log(`Notion2API already running (${status.model_count || 0} models)`);
-    return null;
-  }
-  return startProvider(settings);
+  return ensureProviderStarted(settings);
 }
 
 
@@ -352,13 +374,7 @@ async function ensureProviderAutoLaunch() {
     log('Notion2API auto-launch disabled');
     return;
   }
-  const status = await getManagedStatus();
-  if (status.running) {
-    log(`Notion2API already running (${status.model_count || 0} models)`);
-    return;
-  }
-  startProvider(settings);
-  await waitForManagedStatus(45000);
+  await ensureProviderStarted(settings);
 }
 
 function waitForUrl(url, timeoutMs = 90000) {
@@ -959,6 +975,15 @@ ipcMain.handle('diagnostics:status', () => {
 
 ipcMain.handle('diagnostics:start', async () => {
   await startStack();
+  // Asynchronously wait for backend health and auto-launch the provider
+  (async () => {
+    try {
+      await waitForUrl(HEALTH_URL, 90000);
+      await ensureProviderAutoLaunch();
+    } catch (e) {
+      log(`Failed to auto-launch provider from diagnostics: ${e.message}`);
+    }
+  })();
   return { ok: true };
 });
 

@@ -166,10 +166,21 @@ async def test_run_audit_pipeline_full_e2e(mock_settings):
         assert complete_event["convergence_status"] == "not_applicable"
 
 
+@pytest.mark.parametrize(
+    ("provider_message", "expected_message"),
+    [
+        ("API Failure", "API Failure"),
+        (None, "Stage 3 provider error."),
+        ("", "Stage 3 provider error."),
+    ],
+)
 @pytest.mark.asyncio
-async def test_run_audit_pipeline_stage3_provider_error_surfaces(mock_settings):
-    """ponytail: provider error dict (not raised exception) must fail the debate,
-    not silently skip Stage 4 and complete as not_applicable."""
+async def test_run_audit_pipeline_stage3_provider_error_surfaces(
+    mock_settings,
+    provider_message,
+    expected_message,
+):
+    """A provider error dictionary must fail the debate and skip Stage 4."""
     stage1_items = [
         2,
         {"model": "model_a", "response": "Answer A", "error": None},
@@ -196,7 +207,7 @@ async def test_run_audit_pipeline_stage3_provider_error_surfaces(mock_settings):
          patch("backend.audit_pipeline.extract_material_claims", return_value={"claims": raw_claims, "model": "extractor"}), \
          patch("backend.audit_pipeline.stage2b_collect_audits", side_effect=make_async_gen(stage2b_items)), \
          patch("backend.audit_pipeline.stage2c_adjudicate", return_value=stage2c_val), \
-         patch("backend.audit_pipeline.query_model", return_value={"error": True, "error_message": "API Failure"}), \
+         patch("backend.audit_pipeline.query_model", return_value={"error": True, "error_message": provider_message}), \
          patch("backend.audit_pipeline.get_chairman_model", return_value="chairman"):
 
         events = []
@@ -211,7 +222,7 @@ async def test_run_audit_pipeline_stage3_provider_error_surfaces(mock_settings):
         assert complete["convergence_status"] == "failed"
         assert complete["error"]["stage"] == "stage3"
         assert complete["error"]["status"] == "failed_synthesis"
-        assert "API Failure" in complete["error"]["message"]
+        assert complete["error"]["message"] == expected_message
 
 @pytest.mark.asyncio
 async def test_run_audit_pipeline_chat_only(mock_settings):

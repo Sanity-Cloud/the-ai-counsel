@@ -102,6 +102,19 @@ describe('buildStage2bView', () => {
     expect(view.evaluatorAudits).toHaveLength(2);
     expect(view.auditStatus).toBe('complete');
   });
+
+  it('does not count queued or running placeholders as valid evaluators', () => {
+    const view = buildStage2bView([
+      { model: 'modelA', status: 'queued' },
+      { model: 'modelB', status: 'running' },
+    ]);
+
+    expect(view.validEvaluators).toBe(0);
+    expect(view.expectedEvaluators).toBe(2);
+    expect(view.quorumMet).toBe(false);
+    expect(view.partialCoverage).toBe(false);
+    expect(view.evaluatorAudits.map((audit) => audit.status)).toEqual(['queued', 'running']);
+  });
 });
 
 describe('normalizeStage2c', () => {
@@ -179,6 +192,23 @@ describe('buildAuditViewModel', () => {
     expect(vm.stage2a.evaluators).toHaveLength(0);
     expect(vm.stage2b.loading).toBe(false);
     expect(vm.stage2c.loading).toBe(false);
+  });
+
+  it('preserves Stage 2A queued and running statuses in coverage', () => {
+    const vm = buildAuditViewModel({
+      stage2a: [
+        { model: 'modelA', status: 'queued' },
+        { model: 'modelB', status: 'running' },
+      ],
+      metadata: {},
+      loading: { stage2a: true },
+      timers: {},
+    });
+
+    expect(vm.stage2a.evaluators.map((evaluator) => evaluator.status)).toEqual(['queued', 'running']);
+    expect(vm.stage2a.coverage.completed).toBe(0);
+    expect(vm.stage2a.coverage.queued).toBe(1);
+    expect(vm.stage2a.coverage.running).toBe(1);
   });
 
   it('terminates Stage 2C loading after an error event', () => {

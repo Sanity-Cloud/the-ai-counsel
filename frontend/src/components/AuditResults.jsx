@@ -4,7 +4,11 @@ import StageTimer from './StageTimer';
 import { getModelVisuals, getShortModelName } from '../utils/modelHelpers';
 import { copyToClipboard } from '../utils/clipboard';
 import { buildAuditViewModel } from '../utils/auditResults';
+import { getRequestStatusLabel } from '../utils/requestStatus';
 import './AuditResults.css';
+
+const IN_PROGRESS_STATUSES = new Set(['queued', 'running', 'paused']);
+const FAILURE_STATUSES = new Set(['failed', 'unaccounted']);
 
 /**
  * Dedicated completed-results presentation for Audit critique mode.
@@ -50,8 +54,20 @@ function Stage2aPanel({ stage2a }) {
 
       <div className="audit-coverage" role="status">
         <span className="audit-coverage-stat">{coverage.completed} completed</span>
+        {coverage.running > 0 && (
+          <span className="audit-coverage-stat">{coverage.running} running</span>
+        )}
+        {coverage.queued > 0 && (
+          <span className="audit-coverage-stat">{coverage.queued} queued</span>
+        )}
+        {coverage.paused > 0 && (
+          <span className="audit-coverage-stat audit-coverage-stat--warn">{coverage.paused} paused</span>
+        )}
         {coverage.failed > 0 && (
           <span className="audit-coverage-stat audit-coverage-stat--warn">{coverage.failed} failed</span>
+        )}
+        {coverage.unaccounted > 0 && (
+          <span className="audit-coverage-stat audit-coverage-stat--warn">{coverage.unaccounted} unaccounted</span>
         )}
         <span className="audit-coverage-stat">{coverage.total} total</span>
       </div>
@@ -71,7 +87,7 @@ function EvaluatorRow({ evaluator, labelToModel }) {
   const [copied, setCopied] = useState(false);
   const visuals = getModelVisuals(evaluator.model);
   const shortName = getShortModelName(evaluator.model);
-  const hasError = evaluator.status === 'failed';
+  const hasError = FAILURE_STATUSES.has(evaluator.status);
 
   const handleCopy = async () => {
     const ok = await copyToClipboard(evaluator.rawOutput || '');
@@ -89,7 +105,7 @@ function EvaluatorRow({ evaluator, labelToModel }) {
         </span>
         <span className="audit-model-name" title={evaluator.model || ''}>{shortName}</span>
         <span className={`audit-status-badge audit-status-badge--${evaluator.status}`}>
-          {evaluator.status === 'failed' ? 'Failed' : 'Completed'}
+          {getRequestStatusLabel(evaluator.status)}
         </span>
         {evaluator.rawOutput && (
           <button
@@ -155,7 +171,12 @@ function AggregateRankings({ aggregateRankings }) {
 
 function Stage2bPanel({ stage2b }) {
   const { heading, claims, contestedCount, strongCount, claimsEvaluated, validEvaluators, expectedEvaluators, auditStatus, quorumMet, partialCoverage, evaluatorAudits, loading, duration } = stage2b;
-  if (loading && claims.length === 0 && evaluatorAudits.length === 0) {
+  const hasInProgressAudits = evaluatorAudits.some((audit) => IN_PROGRESS_STATUSES.has(audit.status));
+  const allAuditsInProgress = evaluatorAudits.length > 0
+    && evaluatorAudits.every((audit) => IN_PROGRESS_STATUSES.has(audit.status));
+  const quorumPending = loading && hasInProgressAudits && !quorumMet;
+
+  if (loading && claims.length === 0 && (evaluatorAudits.length === 0 || allAuditsInProgress)) {
     return (
       <section className="audit-panel audit-panel--2b" aria-label={heading}>
         <PanelHeader heading={heading} duration={duration} />
@@ -180,7 +201,7 @@ function Stage2bPanel({ stage2b }) {
           <span className="audit-coverage-stat audit-coverage-stat--warn">partial coverage</span>
         )}
         <span className={`audit-coverage-stat audit-coverage-stat--${quorumMet ? 'ok' : 'warn'}`}>
-          {quorumMet ? 'quorum met' : 'quorum failed'}
+          {quorumPending ? 'quorum pending' : quorumMet ? 'quorum met' : 'quorum failed'}
         </span>
         {contestedCount > 0 && (
           <span className="audit-coverage-stat audit-coverage-stat--contested">{contestedCount} contested</span>
@@ -205,11 +226,11 @@ function Stage2bPanel({ stage2b }) {
           <summary className="audit-raw-toggle">Raw evaluator audits ({evaluatorAudits.length})</summary>
           <div className="audit-raw-audits">
             {evaluatorAudits.map((ea) => (
-              <div key={ea.model} className={`audit-evaluator ${ea.status === 'failed' ? 'audit-evaluator--error' : ''}`}>
+              <div key={ea.model} className={`audit-evaluator ${FAILURE_STATUSES.has(ea.status) ? 'audit-evaluator--error' : ''}`}>
                 <div className="audit-evaluator-head">
                   <span className="audit-model-name">{getShortModelName(ea.model)}</span>
                   <span className={`audit-status-badge audit-status-badge--${ea.status}`}>
-                    {ea.status === 'failed' ? 'Failed' : 'Completed'}
+                    {getRequestStatusLabel(ea.status)}
                   </span>
                 </div>
                 {ea.errorMessage && <p className="audit-error-text" role="alert">{ea.errorMessage}</p>}

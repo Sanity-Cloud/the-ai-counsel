@@ -1,3 +1,5 @@
+import { getRequestStatus } from './requestStatus';
+
 /**
  * Pure view-model for Audit-mode (critique_mode === 'audit') Stage 2A/2B/2C results.
  * Normalizes both live-streamed and restored-conversation data at the boundary so
@@ -98,8 +100,16 @@ export function buildStage2bView(stage2bResults, metadata = {}) {
   const aggregate = metadata.aggregated_2b || metadata.aggregate_claim_verdicts || {};
   const results = pickResults(stage2bResults, ['stage2b_results', 'stage2b', 'audits'], metadata) || [];
 
+  const resultStatuses = results.map((r) => getRequestStatus(r || {}));
+  const completedResults = results.filter(
+    (r, index) => r && !r.error && resultStatuses[index] === 'completed'
+  );
+  const hasInProgressResults = resultStatuses.some((status) =>
+    ['queued', 'running', 'paused'].includes(status)
+  );
+
   const auditStatus = aggregate.audit_status || 'unknown';
-  const validEvaluators = aggregate.valid_evaluators ?? results.filter((r) => r && !r.error).length;
+  const validEvaluators = aggregate.valid_evaluators ?? completedResults.length;
   const expectedEvaluators = aggregate.expected_evaluators ?? results.length;
   const claimsEvaluated = aggregate.claims_evaluated ?? (aggregate.aggregated_claims || []).length;
 
@@ -115,14 +125,15 @@ export function buildStage2bView(stage2bResults, metadata = {}) {
   const strongCount = claims.filter((c) => c.status === 'strong').length;
 
   const quorumMet = auditStatus !== 'failed' && validEvaluators >= 2 && (expectedEvaluators === 0 || validEvaluators / Math.max(1, expectedEvaluators) >= 0.5);
-  const partialCoverage = auditStatus === 'partial' || (validEvaluators > 0 && validEvaluators < expectedEvaluators);
+  const partialCoverage = auditStatus === 'partial'
+    || (!hasInProgressResults && validEvaluators > 0 && validEvaluators < expectedEvaluators);
 
   // Per-evaluator raw audits for expandable detail.
-  const evaluatorAudits = results.map((r) => ({
-    model: r.model,
-    status: r.error ? 'failed' : 'completed',
-    errorMessage: r.error_message || null,
-    claimVerdicts: r.claim_verdicts || {},
+  const evaluatorAudits = results.map((r, index) => ({
+    model: r?.model,
+    status: resultStatuses[index],
+    errorMessage: r?.error_message || null,
+    claimVerdicts: r?.claim_verdicts || {},
   }));
 
   return {
@@ -163,17 +174,21 @@ export function buildAuditViewModel({ stage2a, stage2b, stage2c, metadata = {}, 
   const stage2cView = normalizeStage2c(stage2c, meta);
 
   const evaluators = stage2aResults.map((r) => ({
-    model: r.model,
-    status: r.error ? 'failed' : 'completed',
-    errorMessage: r.error_message || null,
-    rawOutput: r.raw_output || r.ranking || r.response || '',
-    parsedRanking: r.parsed_ranking || r.parsed?.ranking || r.parsed || [],
-    attempts: r.attempts || [],
+    model: r?.model,
+    status: getRequestStatus(r || {}),
+    errorMessage: r?.error_message || null,
+    rawOutput: r?.raw_output || r?.ranking || r?.response || '',
+    parsedRanking: r?.parsed_ranking || r?.parsed?.ranking || r?.parsed || [],
+    attempts: r?.attempts || [],
   }));
   const coverage = {
     total: evaluators.length,
     completed: evaluators.filter((e) => e.status === 'completed').length,
     failed: evaluators.filter((e) => e.status === 'failed').length,
+    queued: evaluators.filter((e) => e.status === 'queued').length,
+    running: evaluators.filter((e) => e.status === 'running').length,
+    paused: evaluators.filter((e) => e.status === 'paused').length,
+    unaccounted: evaluators.filter((e) => e.status === 'unaccounted').length,
   };
 
   const aggregateRankings = meta.aggregate_rankings || [];

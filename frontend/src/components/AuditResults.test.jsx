@@ -124,6 +124,59 @@ describe('AuditResults SSR', () => {
     expect(html).not.toContain('Stage 2C: Chairman Adjudication');
   });
 
+  it('renders Stage 2A queued and running badges without claiming completion', () => {
+    const html = render({
+      stage2a: [
+        { model: 'model-a', status: 'queued' },
+        { model: 'model-b', status: 'running' },
+      ],
+      stage2b: null,
+      stage2c: null,
+      metadata: { critique_mode: 'audit' },
+      loading: { stage2a: true },
+    });
+
+    expect(html).toContain('Queued');
+    expect(html).toContain('Running');
+    expect(html).toContain('0 completed');
+    expect(html).not.toContain('2 completed');
+  });
+
+  it('keeps Stage 2B in its loading state while every evaluator is pending', () => {
+    const html = render({
+      stage2a: null,
+      stage2b: [
+        { model: 'model-a', status: 'queued' },
+        { model: 'model-b', status: 'running' },
+      ],
+      stage2c: null,
+      metadata: { critique_mode: 'audit' },
+      loading: { stage2b: true },
+    });
+
+    expect(html).toContain('Stage 2B claim audits in progress');
+    expect(html).not.toContain('quorum met');
+    expect(html).not.toContain('quorum failed');
+  });
+
+  it('renders mixed Stage 2B terminal and running statuses as quorum pending', () => {
+    const html = render({
+      stage2a: null,
+      stage2b: [
+        { model: 'model-a', status: 'completed', claim_verdicts: {} },
+        { model: 'model-b', status: 'running' },
+      ],
+      stage2c: null,
+      metadata: { critique_mode: 'audit' },
+      loading: { stage2b: true },
+    });
+
+    expect(html).toContain('Completed');
+    expect(html).toContain('Running');
+    expect(html).toContain('quorum pending');
+    expect(html).not.toContain('quorum failed');
+  });
+
   it('terminates Stage 2C loading after an error event (no perpetual spinner)', () => {
     const html = render({
       stage2c: { error: true, error_message: 'API Failure', model: 'notion2api:anthropic:ambrosia-tart-high' },

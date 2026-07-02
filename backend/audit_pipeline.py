@@ -1300,7 +1300,11 @@ async def run_audit_pipeline(
                     "error_message": "Stage 3 query returned an invalid response.",
                 }
             elif final_res.get("error"):
-                stage3_response = {"model": chairman, "error": True, "error_message": final_res.get("error_message", "Stage 3 provider error.")}
+                stage3_response = {
+                    "model": chairman,
+                    "error": True,
+                    "error_message": final_res.get("error_message") or "Stage 3 provider error.",
+                }
             else:
                 stage3_response = {
                     "model": chairman,
@@ -1367,8 +1371,8 @@ async def run_audit_pipeline(
         }
     }]
 
-    # ponytail: terminal-error guard - a provider error dict (vs raised exception)
-    # must surface as a failed debate, not silently skip Stage 4 and complete.
+    # A provider error dictionary (rather than a raised exception) must surface
+    # as a failed debate, not silently skip Stage 4 and complete.
     if (
         execution_mode == "full"
         and stage3_response
@@ -1385,7 +1389,7 @@ async def run_audit_pipeline(
             "error": {
                 "stage": "stage3",
                 "status": "failed_synthesis",
-                "message": stage3_response.get("error_message", "Stage 3 synthesis failed."),
+                "message": stage3_response.get("error_message") or "Stage 3 synthesis failed.",
             },
             "cost_report": build_iterative_debate_cost_report(rounds_data, None),
         }

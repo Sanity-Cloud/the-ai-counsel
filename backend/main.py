@@ -3108,14 +3108,13 @@ async def retry_failed_provider(conversation_id: str, body: RetryRequest):
             from .prompts import STAGE1_SEARCH_CONTEXT_TEMPLATE
             search_context_block = STAGE1_SEARCH_CONTEXT_TEMPLATE.format(search_context=search_context)
 
-        try:
-            prompt_template = settings.stage1_prompt or ""
-            if not prompt_template:
-                from .prompts import STAGE1_PROMPT_DEFAULT
-                prompt_template = STAGE1_PROMPT_DEFAULT
-            prompt = prompt_template.format(user_query=user_query, search_context_block=search_context_block)
-        except Exception:
-            prompt = f"{search_context_block}Question: {user_query}" if search_context_block else user_query
+        from .council import build_stage1_prompt
+        prompt = build_stage1_prompt(
+            model_id,
+            settings,
+            user_query,
+            search_context_block,
+        )
 
         prompt = apply_response_language(prompt, settings.response_language)
         messages = (history[:-1] if is_first_message else history) + [{"role": "user", "content": prompt}]
@@ -3406,14 +3405,13 @@ async def fire_pending_provider(conversation_id: str, body: FireRequest):
             from .prompts import STAGE1_SEARCH_CONTEXT_TEMPLATE
             search_context_block = STAGE1_SEARCH_CONTEXT_TEMPLATE.format(search_context=search_context)
 
-        try:
-            prompt_template = settings.stage1_prompt or ""
-            if not prompt_template:
-                from .prompts import STAGE1_PROMPT_DEFAULT
-                prompt_template = STAGE1_PROMPT_DEFAULT
-            prompt = prompt_template.format(user_query=user_query, search_context_block=search_context_block)
-        except Exception:
-            prompt = f"{search_context_block}Question: {user_query}" if search_context_block else user_query
+        from .council import build_stage1_prompt
+        prompt = build_stage1_prompt(
+            model_id,
+            settings,
+            user_query,
+            search_context_block,
+        )
 
         prompt = apply_response_language(prompt, settings.response_language)
         messages = (history[:-1] if is_first_message else history) + [{"role": "user", "content": prompt}]

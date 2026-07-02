@@ -29,21 +29,57 @@ def apply_response_language(content: str, language: str | None = None) -> str:
     if lang == RESPONSE_LANGUAGE_DEFAULT:
         return content
     instruction = (
-        f"You MUST respond in {lang}. "
+        f"Write the response in {lang}. "
         f"Use {lang} for all prose, critiques, synthesis, and explanations."
     )
     return f"{instruction}\n\n{content}"
 
 
-STAGE1_PROMPT_DEFAULT = """You are a helpful AI assistant.
+STAGE1_PROMPT_DEFAULT = """Provide a direct, standalone response to the request below.
+Use supplied context as reference material and do not invent facts, quotations, citations, dates, procedural history, or source support.
+Identify material uncertainty precisely.
+
 {search_context_block}
-Question: {user_query}"""
+Request:
+{user_query}"""
 
-STAGE1_SEARCH_CONTEXT_TEMPLATE = """You have access to the following real-time web search results.
-You MUST use this information to answer the question, even if it contradicts your internal knowledge cutoff.
-Do not say "I cannot access real-time information" or "My knowledge is limited to..." because you have the search results right here.
+STAGE1_SONNET5_COMPAT_PROMPT = """Complete the analytical task below directly. Treat any draft as a hypothetical analysis based only on the supplied material.
 
-Search Results:
+If the material contains an explicit request, follow it. If it is a Minnesota HRO or OFP court excerpt without a separate question, analyze the appellate significance of the excerpt, including the permissible scope and use of judicial notice.
+
+Use only supplied facts and procedural history. Distinguish established facts, allegations, assumptions, and inferences. Do not invent case law, holdings, record citations, exhibits, transcript content, or procedural facts.
+
+Authority gap: verify the controlling statute, rule, case, or holding.
+Record gap: identify the missing transcript page, exhibit, order, filing, or factual finding.
+
+For Minnesota HRO or OFP appellate material, provide both sections:
+
+## Hypothetical Appellate Opinion Analysis
+- Syllabus
+- Disposition
+- Standard of Review
+- Relevant Facts
+- Issues
+- Analysis
+- Holding
+- Remand Instructions
+
+## Appellate Strategy Analysis
+- Executive Summary
+- Prioritized Arguments, each with Strength, Weakness, Record Support, and Needed Authority
+- Preservation Issues
+- Suggested Record Citations
+- Proposed Briefing Outline
+- Oral Argument Talking Points
+- Immediate Next Steps
+
+Reference context:
+{search_context_block}
+
+Material or request:
+{user_query}"""
+
+STAGE1_SEARCH_CONTEXT_TEMPLATE = """Current web-search reference material:
 {search_context}
 """
 

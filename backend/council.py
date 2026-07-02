@@ -97,6 +97,49 @@ def _is_notion2api_model(model: str) -> bool:
     return False
 
 
+def _is_notion_sonnet5_model(model: str) -> bool:
+    normalized = (model or "").strip().lower()
+    if ":" in normalized:
+        normalized = normalized.rsplit(":", 1)[-1]
+    return normalized in {
+        "angel-cake-high",
+        "claude-sonnet5",
+        "claude-sonnet-5",
+        "sonnet-5",
+        "sonnet5",
+    }
+
+
+def build_stage1_prompt(
+    model: str,
+    settings: Any,
+    user_query: str,
+    search_context_block: str = "",
+) -> str:
+    from .prompts import STAGE1_PROMPT_DEFAULT, STAGE1_SONNET5_COMPAT_PROMPT
+
+    if _is_notion_sonnet5_model(model):
+        template = STAGE1_SONNET5_COMPAT_PROMPT
+    else:
+        template = getattr(settings, "stage1_prompt", "") or STAGE1_PROMPT_DEFAULT
+
+    try:
+        return template.format(
+            user_query=user_query,
+            search_context_block=search_context_block,
+        )
+    except Exception:
+        fallback = (
+            STAGE1_SONNET5_COMPAT_PROMPT
+            if _is_notion_sonnet5_model(model)
+            else STAGE1_PROMPT_DEFAULT
+        )
+        return fallback.format(
+            user_query=user_query,
+            search_context_block=search_context_block,
+        )
+
+
 def _notion_council_lock() -> asyncio.Lock:
     global _NOTION_COUNCIL_LOCK, _NOTION_COUNCIL_LOCK_LOOP
     loop = asyncio.get_running_loop()
@@ -782,31 +825,18 @@ async def stage1_collect_responses(
                 from .prompts import STAGE1_SEARCH_CONTEXT_TEMPLATE
                 search_context_block = STAGE1_SEARCH_CONTEXT_TEMPLATE.format(search_context=search_context)
 
-            # Use customizable Stage 1 prompt template
-            try:
-                prompt_template = settings.stage1_prompt
-                if not prompt_template:
-                    from .prompts import STAGE1_PROMPT_DEFAULT
-                    prompt_template = STAGE1_PROMPT_DEFAULT
+            from .documents import format_documents_for_prompt
+            fallback_block = format_documents_for_prompt(prepared.fallback_documents)
+            model_query = user_query
+            if fallback_block:
+                model_query = f"{user_query}\n\n{fallback_block}"
 
-                # Build the fallback document prompt text block
-                from .documents import format_documents_for_prompt
-                fallback_block = format_documents_for_prompt(prepared.fallback_documents)
-
-                model_query = user_query
-                if fallback_block:
-                    model_query = f"{user_query}\n\n{fallback_block}"
-
-                model_prompt = prompt_template.format(
-                    user_query=model_query,
-                    search_context_block=search_context_block
-                )
-            except Exception as e:
-                logger.warning(f"Error formatting Stage 1 prompt for {m}: {e}. Using fallback.")
-                from .documents import format_documents_for_prompt
-                fallback_block = format_documents_for_prompt(prepared.fallback_documents)
-                model_query = f"{user_query}\n\n{fallback_block}" if fallback_block else user_query
-                model_prompt = f"{search_context_block}Question: {model_query}" if search_context_block else model_query
+            model_prompt = build_stage1_prompt(
+                m,
+                settings,
+                model_query,
+                search_context_block,
+            )
 
             if messages_override is None and per_model_messages is None:
                 model_prompt = apply_response_language(model_prompt, settings.response_language)

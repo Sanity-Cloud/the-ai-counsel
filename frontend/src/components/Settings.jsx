@@ -8,6 +8,7 @@ import PromptSettings from './settings/PromptSettings';
 import DebateSettings from './settings/DebateSettings';
 import GeneralSettings from './settings/GeneralSettings';
 import { RESPONSE_LANGUAGE_DEFAULT, RESPONSE_LANGUAGES_FALLBACK } from '../constants/responseLanguages';
+import { createHydrationGate } from '../utils/hydrationGate';
 import './Settings.css';
 
 const PROMPT_FIELDS = [
@@ -208,9 +209,17 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
   // Remote/Local filter toggles per model type
   const [councilMemberFilters, setCouncilMemberFilters] = useState({});  // Per-member filters (indexed by member index)
   const [chairmanFilter, setChairmanFilter] = useState('remote');
+  const [hydrationCommitToken, setHydrationCommitToken] = useState(0);
+
+  const autoSaveTimerRef = useRef(null);
+  const hydrationGateRef = useRef(createHydrationGate());
 
   useEffect(() => {
     loadSettings();
+  }, []);
+
+  useEffect(() => () => {
+    hydrationGateRef.current.cancel();
   }, []);
 
   // Update activeSection when initialSection prop changes
@@ -219,11 +228,8 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
   }, [initialSection]);
 
   // Debounced auto-save for all settings (API keys still save on successful test)
-  const autoSaveTimerRef = useRef(null);
-  const isInitialLoadRef = useRef(true);
-
   useEffect(() => {
-    if (!settings || isInitialLoadRef.current) return;
+    if (!settings || hydrationGateRef.current.isHydrating()) return;
 
     const settingsChanged =
       selectedSearchProvider !== (settings.search_provider || 'duckduckgo') ||
@@ -384,6 +390,8 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
 
   // Effect 1: Auto-update Council Member filters when providers change or members are added
   useEffect(() => {
+    if (!settings || hydrationGateRef.current.isHydrating()) return;
+
     let changed = false;
     const indicesToClear = [];
 
@@ -412,11 +420,13 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
         return updated;
       });
     }
-  }, [enabledProviders, councilModels.length]);
+  }, [enabledProviders, councilModels.length, settings]);
 
   // Effect 2: Auto-update Chairman and Search filters when providers change
   // Note: We intentionally exclude councilModels.length to prevent resetting these when adding members
   useEffect(() => {
+    if (!settings || hydrationGateRef.current.isHydrating()) return;
+
     // Update Chairman
     const newChairmanFilter = getNewFilter(chairmanFilter);
     if (newChairmanFilter !== chairmanFilter) {
@@ -424,7 +434,13 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
       setChairmanModel('');
     }
 
-  }, [enabledProviders, chairmanFilter]);
+  }, [enabledProviders, chairmanFilter, settings]);
+
+  // Release only after the guarded effects have observed the committed hydration state.
+  useEffect(() => {
+    if (!hydrationCommitToken) return;
+    hydrationGateRef.current.release(hydrationCommitToken);
+  }, [hydrationCommitToken]);
 
   // Clear validation errors when chairman or council members change
   useEffect(() => {
@@ -448,7 +464,7 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
   }, [chairmanModel, councilModels, validationErrors]);
 
   const loadSettings = async () => {
-    isInitialLoadRef.current = true;
+    const hydrationToken = hydrationGateRef.current.begin();
     try {
       const data = await api.getSettings();
       let defaults = {};
@@ -462,6 +478,7 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
         ])
       );
       const normalizedData = { ...data, ...normalizedPrompts };
+      if (!hydrationGateRef.current.isCurrent(hydrationToken)) return;
 
       // Set settings immediately to show UI
       setSettings(normalizedData);
@@ -532,10 +549,6 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
       setChairmanTemperature(data.chairman_temperature ?? 0.4);
       setStage2Temperature(data.stage2_temperature ?? 0.3);
 
-      setTimeout(() => {
-        isInitialLoadRef.current = false;
-      }, 500);
-
       // Remote/Local filters - load from saved settings
       if (data.council_member_filters) {
         setCouncilMemberFilters(data.council_member_filters);
@@ -561,8 +574,6 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
       setNotion2apiPauseOnFailure(data.notion2api_pause_on_failure ?? true);
       setNotion2apiDefaultContinuationMode(data.notion2api_default_continuation_mode || 'normal');
       setNotion2apiToken('');
-      await loadNotion2apiStatus();
-      await loadNotion2apiModels();
 
       // Prompts
       setPrompts(normalizedPrompts);
@@ -585,7 +596,11 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
       });
       setGroqApiKey(''); // Clear Groq key too
 
+      setHydrationCommitToken(hydrationToken);
+
       // Load available models in background
+      loadNotion2apiStatus();
+      loadNotion2apiModels();
       loadModels();
       loadOllamaModels(data.ollama_base_url || 'http://localhost:11434');
       if (data.custom_endpoint_url) {

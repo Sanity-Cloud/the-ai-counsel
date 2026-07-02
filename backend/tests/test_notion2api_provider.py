@@ -7,11 +7,19 @@ from backend.providers.notion2api import Notion2APIProvider
 
 
 class _FakeResponse:
-    def __init__(self, status_code, json_body=None, text="", content_type="application/json"):
+    def __init__(
+        self,
+        status_code,
+        json_body=None,
+        text="",
+        content_type="application/json",
+        append_done=True,
+    ):
         self.status_code = status_code
         self._json = json_body or {}
         self.text = text or json.dumps(self._json)
         self.headers = {"content-type": content_type}
+        self.append_done = append_done
 
     def json(self):
         return self._json
@@ -22,6 +30,8 @@ class _FakeResponse:
     async def aiter_lines(self):
         for line in self.text.splitlines():
             yield line
+        if self.append_done and self.status_code == 200 and "[DONE]" not in self.text:
+            yield "data: [DONE]"
 
 
 class _FakeAsyncClient:
@@ -43,8 +53,9 @@ class _FakeAsyncClient:
         self.kwargs.update(kwargs)
         if not type(self).responses:
             raise AssertionError("No scripted response left for httpx post")
-        status, body, text = type(self).responses.pop(0)
-        return _FakeResponse(status, body, text)
+        status, body, text, *options = type(self).responses.pop(0)
+        append_done = options[0] if options else True
+        return _FakeResponse(status, body, text, append_done=append_done)
 
     async def get(self, url, **kwargs):
         self.kwargs["__url__"] = url
@@ -52,8 +63,9 @@ class _FakeAsyncClient:
         self.kwargs.update(kwargs)
         if not type(self).responses:
             raise AssertionError("No scripted response left for httpx get")
-        status, body, text = type(self).responses.pop(0)
-        return _FakeResponse(status, body, text)
+        status, body, text, *options = type(self).responses.pop(0)
+        append_done = options[0] if options else True
+        return _FakeResponse(status, body, text, append_done=append_done)
 
     @contextlib.asynccontextmanager
     async def stream(self, method, url, **kwargs):
@@ -62,8 +74,9 @@ class _FakeAsyncClient:
         self.kwargs.update(kwargs)
         if not type(self).responses:
             raise AssertionError(f"No scripted response left for httpx stream {method}")
-        status, body, text = type(self).responses.pop(0)
-        yield _FakeResponse(status, body, text)
+        status, body, text, *options = type(self).responses.pop(0)
+        append_done = options[0] if options else True
+        yield _FakeResponse(status, body, text, append_done=append_done)
 
 
 @pytest.fixture
@@ -102,7 +115,7 @@ async def test_notion2api_query_uses_dedicated_prefix_and_endpoint(fake_httpx, n
     assert sent["headers"]["Authorization"] == "Bearer test-token"
     assert sent["json"]["model"] == "claude-opus4.7"
     assert sent["json"]["messages"] == [{"role": "user", "content": "hi"}]
-    assert sent["timeout"] == 600.0
+    assert sent["timeout"] == 1200.0
 
 
 @pytest.mark.asyncio
@@ -230,6 +243,29 @@ async def test_notion2api_query_retries_upstream_empty_response(fake_httpx, noti
 
 
 @pytest.mark.asyncio
+async def test_notion2api_query_retries_stream_without_done(fake_httpx, notion_env, monkeypatch):
+    async def _no_sleep(_delay):
+        return None
+
+    monkeypatch.setattr("backend.providers.notion2api.asyncio.sleep", _no_sleep)
+    partial = json.dumps({"choices": [{"delta": {"content": "partial"}}]})
+    fake_httpx.responses.extend([
+        (200, {}, partial, False),
+        (200, {}, partial, False),
+        (200, {}, partial, False),
+    ])
+
+    result = await Notion2APIProvider().query(
+        "notion2api:grok-build0.1",
+        [{"role": "user", "content": "rank"}],
+    )
+
+    assert result["error"] is True
+    assert "without [DONE] marker" in result["error_message"]
+    assert len(fake_httpx.instances) == 3
+
+
+@pytest.mark.asyncio
 async def test_notion2api_query_respects_longer_explicit_timeout(fake_httpx, notion_env):
     fake_httpx.responses.append((
         200,
@@ -240,10 +276,10 @@ async def test_notion2api_query_respects_longer_explicit_timeout(fake_httpx, not
     await Notion2APIProvider().query(
         "notion2api:gpt-5.5",
         [{"role": "user", "content": "hi"}],
-        timeout=900.0,
+        timeout=1800.0,
     )
 
-    assert fake_httpx.instances[-1].kwargs["timeout"] == 900.0
+    assert fake_httpx.instances[-1].kwargs["timeout"] == 1800.0
 
 
 @pytest.mark.asyncio

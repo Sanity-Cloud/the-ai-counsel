@@ -18,7 +18,7 @@ DEFAULT_NOTION2API_BASE_URL = "http://127.0.0.1:8120/v1"
 NOTION2API_QUERY_ATTEMPTS = 3
 NOTION2API_RETRY_BASE_DELAY = 1.5
 NOTION2API_RETRY_MAX_DELAY = 20.0
-NOTION2API_QUERY_TIMEOUT = 600.0
+NOTION2API_QUERY_TIMEOUT = 1200.0
 
 # 502 circuit breaker constants
 NOTION2API_502_PAUSE_SECONDS = 30.0
@@ -412,6 +412,7 @@ class Notion2APIProvider(LLMProvider):
                                 "error_message": f"Notion2API error{suffix}: {response.status_code} - {last_response_text}",
                             }
 
+                        seen_done = False
                         async for line in response.aiter_lines():
                             stripped = line.strip()
                             if not stripped or stripped.startswith(":"):
@@ -425,6 +426,7 @@ class Notion2APIProvider(LLMProvider):
                                 continue
 
                             if data_text == "[DONE]":
+                                seen_done = True
                                 break
 
                             try:
@@ -456,6 +458,9 @@ class Notion2APIProvider(LLMProvider):
                             if isinstance(event, dict) and event.get("error") is not None:
                                 last_response_text = json.dumps(event.get("error"), ensure_ascii=False)
 
+                        if not seen_done:
+                            raise httpx.RemoteProtocolError("Stream ended without [DONE] marker")
+
                 content = "".join(content_parts)
                 if str(content or "").strip():
                     result = {"content": content, "usage": usage, "error": False}
@@ -473,46 +478,23 @@ class Notion2APIProvider(LLMProvider):
                     await asyncio.sleep(self._retry_delay(attempt))
                     continue
 
-            except (httpx.ReadError, httpx.RemoteProtocolError, httpx.StreamError) as exc:
-                content = "".join(content_parts)
-                if str(content or "").strip():
-                    return {
-                        "content": content,
-                        "usage": usage,
-                        "finish_reason": finish_reason,
-                        "stream_interrupted": True,
-                        "error": False,
-                    }
+            except (httpx.ReadError, httpx.RemoteProtocolError, httpx.StreamError, httpx.TimeoutException) as exc:
                 last_response_text = str(exc) or repr(exc)
                 last_status_code = 0
                 if attempt < NOTION2API_QUERY_ATTEMPTS:
                     await asyncio.sleep(self._retry_delay(attempt))
                     continue
 
-            except httpx.TimeoutException:
-                content = "".join(content_parts)
-                if str(content or "").strip():
-                    return {
-                        "content": content,
-                        "usage": usage,
-                        "finish_reason": finish_reason,
-                        "stream_interrupted": True,
-                        "error": False,
-                    }
-                return {"error": True, "error_message": f"Notion2API request timed out after {int(effective_timeout)}s"}
+                return {"error": True, "error_message": f"Stream interrupted prematurely: {last_response_text}"}
             except httpx.ConnectError:
                 return {"error": True, "error_message": f"Could not connect to Notion2API at {base_url}"}
             except Exception as exc:
-                content = "".join(content_parts)
-                if str(content or "").strip():
-                    return {
-                        "content": content,
-                        "usage": usage,
-                        "finish_reason": finish_reason,
-                        "stream_interrupted": True,
-                        "error": False,
-                    }
-                return {"error": True, "error_message": str(exc) or repr(exc)}
+                last_response_text = str(exc) or repr(exc)
+                if attempt < NOTION2API_QUERY_ATTEMPTS:
+                    await asyncio.sleep(self._retry_delay(attempt))
+                    continue
+
+                return {"error": True, "error_message": f"Request failed: {last_response_text}"}
 
         return {
             "error": True,

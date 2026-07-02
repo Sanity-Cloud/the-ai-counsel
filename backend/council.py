@@ -74,6 +74,7 @@ def is_annotation_only_evaluator_output(text: str) -> bool:
 
 
 _NOTION_COUNCIL_LOCK: asyncio.Lock | None = None
+_NOTION_COUNCIL_LOCK_LOOP: asyncio.AbstractEventLoop | None = None
 _NOTION_STAGGER_SECONDS = 3.0
 _NOTION_503_PAUSE_SECONDS = 30.0
 _NOTION_503_MAX_RETRIES = 2
@@ -96,10 +97,12 @@ def _is_notion2api_model(model: str) -> bool:
     return False
 
 
-def _notion_council_lock() -> asyncio.Lock | None:
-    global _NOTION_COUNCIL_LOCK
-    if _NOTION_COUNCIL_LOCK is None:
+def _notion_council_lock() -> asyncio.Lock:
+    global _NOTION_COUNCIL_LOCK, _NOTION_COUNCIL_LOCK_LOOP
+    loop = asyncio.get_running_loop()
+    if _NOTION_COUNCIL_LOCK is None or _NOTION_COUNCIL_LOCK_LOOP is not loop:
         _NOTION_COUNCIL_LOCK = asyncio.Lock()
+        _NOTION_COUNCIL_LOCK_LOOP = loop
     return _NOTION_COUNCIL_LOCK
 
 
@@ -163,22 +166,33 @@ async def _query_model_gated(
     conversation_id: str | None = None,
     max_output_tokens: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Serialize Notion2API custom and direct calls with stagger and 503 backoff."""
+    """Stagger Notion request starts without serializing in-flight model calls."""
+    if not _is_notion2api_model(model):
+        return await _query_model_raw(
+            model,
+            messages,
+            timeout=timeout,
+            temperature=temperature,
+            attachments=attachments,
+            conversation_id=conversation_id,
+            max_output_tokens=max_output_tokens,
+        )
+
     lock = _notion_council_lock()
     messages = _vary_notion_thread_title(model, messages)
 
     async def _make_call():
         async with lock:
             await _wait_notion_stagger()
-            return await _query_model_raw(
-                model,
-                messages,
-                timeout=timeout,
-                temperature=temperature,
-                attachments=attachments,
-                conversation_id=conversation_id,
-                max_output_tokens=max_output_tokens,
-            )
+        return await _query_model_raw(
+            model,
+            messages,
+            timeout=timeout,
+            temperature=temperature,
+            attachments=attachments,
+            conversation_id=conversation_id,
+            max_output_tokens=max_output_tokens,
+        )
 
     result = await _make_call()
 

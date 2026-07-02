@@ -12,6 +12,7 @@ export const VERIFIED_NOTION2API_MODELS = Object.freeze({
   'vertex-gemini-2.5-flash': { displayName: 'Gemini 2.5 Flash', family: 'gemini', group: 'fast' },
   'vertex-gemini-3.5-flash': { displayName: 'Gemini 3.5 Flash', family: 'gemini', group: 'fast' },
   'almond-croissant-low': { displayName: 'Sonnet 4.6', family: 'anthropic', group: 'fast' },
+  'angel-cake-high': { displayName: 'Sonnet 5', family: 'anthropic', group: 'fast' },
   'avocado-froyo-medium': { displayName: 'Opus 4.6', family: 'anthropic', group: 'intelligent' },
   'apricot-sorbet-high': { displayName: 'Opus 4.7', family: 'anthropic', group: 'intelligent' },
   'ambrosia-tart-high': { displayName: 'Opus 4.8', family: 'anthropic', group: 'intelligent' },

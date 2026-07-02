@@ -14,9 +14,10 @@ import {
 
 describe('verified Notion2API model labels', () => {
   it('contains one verified entry for each canonical Notion2API model', () => {
-    expect(Object.keys(VERIFIED_NOTION2API_MODELS)).toHaveLength(21);
+    expect(Object.keys(VERIFIED_NOTION2API_MODELS)).toHaveLength(22);
     expect(VERIFIED_NOTION2API_MODELS['acai-budino'].displayName).toBe('Fable 5');
     expect(VERIFIED_NOTION2API_MODELS['baseten-glm-5.2'].displayName).toBe('GLM 5.2');
+    expect(VERIFIED_NOTION2API_MODELS['angel-cake-high'].displayName).toBe('Sonnet 5');
   });
 
   it('maps exact Notion2API IDs to friendly names without changing the ID', () => {

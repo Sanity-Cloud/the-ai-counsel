@@ -307,6 +307,8 @@ async def extract_material_claims(
             cumulative_usage["output_tokens"] += int(usage.get("output_tokens") or 0)
             cumulative_usage["total_tokens"] += int(usage.get("total_tokens") or 0)
             response_cost = response.get("cost")
+            if isinstance(response_cost, dict):
+                response_cost = response_cost.get("total_cost")
             if isinstance(response_cost, (int, float)):
                 cumulative_cost += float(response_cost)
 
@@ -1304,6 +1306,8 @@ async def run_audit_pipeline(
                     "model": chairman,
                     "error": True,
                     "error_message": final_res.get("error_message") or "Stage 3 provider error.",
+                    "usage": final_res.get("usage"),
+                    "cost": final_res.get("cost"),
                 }
             else:
                 stage3_response = {

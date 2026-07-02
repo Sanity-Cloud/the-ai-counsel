@@ -207,7 +207,19 @@ async def test_run_audit_pipeline_stage3_provider_error_surfaces(
          patch("backend.audit_pipeline.extract_material_claims", return_value={"claims": raw_claims, "model": "extractor"}), \
          patch("backend.audit_pipeline.stage2b_collect_audits", side_effect=make_async_gen(stage2b_items)), \
          patch("backend.audit_pipeline.stage2c_adjudicate", return_value=stage2c_val), \
-         patch("backend.audit_pipeline.query_model", return_value={"error": True, "error_message": provider_message}), \
+         patch("backend.audit_pipeline.query_model", return_value={
+             "error": True,
+             "error_message": provider_message,
+             "usage": {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12},
+             "cost": {
+                 "model": "chairman",
+                 "provider": "test",
+                 "input_tokens": 10,
+                 "output_tokens": 2,
+                 "total_tokens": 12,
+                 "total_cost": 0.0123,
+             },
+         }), \
          patch("backend.audit_pipeline.get_chairman_model", return_value="chairman"):
 
         events = []
@@ -218,8 +230,13 @@ async def test_run_audit_pipeline_stage3_provider_error_surfaces(
         assert "stage3_complete" in event_types
         assert "stage4_start" not in event_types
         assert "stage4_complete" not in event_types
+        stage3 = next(e["data"] for e in events if e["type"] == "stage3_complete")
+        assert stage3["usage"] == {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12}
+        assert stage3["cost"]["total_cost"] == 0.0123
         complete = next(e for e in events if e["type"] == "debate_complete")
         assert complete["convergence_status"] == "failed"
+        assert complete["cost_report"]["total_cost"] == 0.0123
+        assert complete["cost_report"]["total_calls"] == 1
         assert complete["error"]["stage"] == "stage3"
         assert complete["error"]["status"] == "failed_synthesis"
         assert complete["error"]["message"] == expected_message
@@ -839,6 +856,42 @@ async def test_extract_material_claims_accepts_non_dict_usage(mock_settings):
 
     assert result["claims"]["Response A"][0]["id"] == "A-001"
     assert result["cost"] == 0.05
+
+
+@pytest.mark.asyncio
+async def test_extract_material_claims_accumulates_dict_cost_on_retry_failure(mock_settings):
+    """Failed extraction retries must retain normalized per-call cost totals."""
+    mock_settings.claim_extraction_timeout_seconds = 180.0
+    responses = [
+        {
+            "content": json.dumps({"Response A": "not a list"}),
+            "usage": {"input_tokens": 1, "output_tokens": 2, "total_tokens": 3},
+            "cost": {"total_cost": 0.01},
+            "error": False,
+        },
+        {
+            "content": json.dumps({"Response A": "still not a list"}),
+            "usage": {"input_tokens": 4, "output_tokens": 5, "total_tokens": 9},
+            "cost": {"total_cost": 0.02},
+            "error": False,
+        },
+    ]
+
+    with patch("backend.audit_pipeline._query_model_gated", side_effect=responses):
+        result = await extract_material_claims(
+            "Response A:\nAnswer A",
+            "test-dict-cost-retries",
+            mock_settings,
+            chairman_override="chairman",
+        )
+
+    assert result["claims"] is None
+    assert result["usage"] == {"input_tokens": 5, "output_tokens": 7, "total_tokens": 12}
+    assert result["cost"] == pytest.approx(0.03)
+    assert [attempt["status"] for attempt in result["attempts"]] == [
+        "validation_failed",
+        "validation_failed",
+    ]
 
 
 @pytest.mark.asyncio

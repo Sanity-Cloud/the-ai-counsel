@@ -12,7 +12,6 @@
   width: 100%;
   max-width: 980px;
   padding: 20px;
-  will-change: transform;
   /* Prevent layout shift on load */
 }
 

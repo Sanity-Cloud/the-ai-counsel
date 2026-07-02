@@ -99,6 +99,22 @@ body::after {
   z-index: 0;
 }
 
+/* Electron compositor fallback: avoid permanently repainted glass/noise layers. */
+body.electron-runtime {
+  background-attachment: scroll;
+}
+
+body.electron-runtime::after {
+  display: none;
+}
+
+body.electron-runtime *,
+body.electron-runtime *::before,
+body.electron-runtime *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
 /* Markdown Content Styling */
 .markdown-content {
   font-family: var(--font-content);

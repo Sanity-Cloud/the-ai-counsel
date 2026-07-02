@@ -14,9 +14,9 @@
 .landing-orb {
   position: absolute;
   border-radius: 50%;
-  filter: blur(80px);
   pointer-events: none;
   contain: paint;
+  opacity: 0.85;
 }
 
 .landing-orb--blue {
@@ -112,11 +112,9 @@
 .landing-card {
   position: relative;
   flex: 1;
-  background: rgba(10, 14, 28, 0.7);
+  background: rgba(10, 14, 28, 0.94);
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 20px;
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
   cursor: pointer;
   text-align: left;
   padding: 0;

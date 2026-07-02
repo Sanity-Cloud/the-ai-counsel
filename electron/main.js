@@ -8,6 +8,7 @@ const { readHotkeys, writeHotkeys, defaultHotkeys, getHotkeyConfigPath } = requi
 const { openHotkeySettings } = require('./windows/hotkeys');
 const { openDiagnostics } = require('./windows/diagnostics');
 const { getDiagnosticsStatus } = require('./lib/diagnostics');
+const { stopService } = require('./lib/process-control');
 
 const APP_NAME = 'The AI Counsel';
 const ROOT_DIR = app.isPackaged
@@ -32,6 +33,7 @@ let frontendProcess;
 let providerProcess;
 let providerStartPromise;
 let stackStartPromise;
+let stackStopPromise;
 let isQuitting = false;
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
@@ -325,7 +327,13 @@ async function stopProvider() {
   }
   const child = providerProcess;
   providerProcess = null;
-  await stopProcess(child, 'notion2api');
+  const settings = readSettingsFile();
+  await stopService({
+    child,
+    name: 'notion2api',
+    url: providerBaseUrl(settings),
+    log,
+  });
 }
 
 async function waitForManagedStatus(timeoutMs = 45000) {
@@ -452,6 +460,9 @@ async function startStackInternal() {
 }
 
 function startStack() {
+  if (stackStopPromise) {
+    return stackStopPromise.then(() => startStack());
+  }
   if (!stackStartPromise) {
     stackStartPromise = startStackInternal().finally(() => {
       stackStartPromise = null;
@@ -460,49 +471,49 @@ function startStack() {
   return stackStartPromise;
 }
 
-function stopProcess(child, name) {
-  if (!isChildRunning(child)) return Promise.resolve();
-
-  log(`Stopping ${name} (pid=${child.pid})`);
-  if (process.platform === 'win32') {
-    return new Promise(resolve => {
-      const killer = spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
-        windowsHide: true,
-        stdio: 'ignore',
-      });
-      killer.on('error', error => {
-        log(`Failed to stop ${name}: ${error.message}`);
-        resolve();
-      });
-      killer.on('close', code => {
-        if (code !== 0 && isChildRunning(child)) {
-          log(`Failed to stop ${name}: taskkill exited with code ${code}`);
-        }
-        resolve();
-      });
-    });
+async function stopStackInternal() {
+  if (stackStartPromise) {
+    try {
+      await stackStartPromise;
+    } catch (error) {
+      log(`Stack start failed before stop: ${error.message}`);
+    }
+  }
+  if (providerStartPromise) {
+    try {
+      await providerStartPromise;
+    } catch (error) {
+      log(`Notion2API start failed before stack stop: ${error.message}`);
+    }
   }
 
-  try {
-    process.kill(-child.pid, 'SIGTERM');
-  } catch (error) {
-    log(`Failed to stop ${name}: ${error.message}`);
-  }
-  return Promise.resolve();
-}
-
-async function stopStack() {
   const frontend = frontendProcess;
   const backend = backendProcess;
   const provider = providerProcess;
   frontendProcess = null;
   backendProcess = null;
   providerProcess = null;
+
+  const settings = readSettingsFile();
   await Promise.all([
-    stopProcess(frontend, 'frontend'),
-    stopProcess(backend, 'backend'),
-    stopProcess(provider, 'notion2api'),
+    stopService({ child: frontend, name: 'frontend', url: FRONTEND_URL, log }),
+    stopService({ child: backend, name: 'backend', url: HEALTH_URL, log }),
+    stopService({
+      child: provider,
+      name: 'notion2api',
+      url: providerBaseUrl(settings),
+      log,
+    }),
   ]);
+}
+
+function stopStack() {
+  if (!stackStopPromise) {
+    stackStopPromise = stopStackInternal().finally(() => {
+      stackStopPromise = null;
+    });
+  }
+  return stackStopPromise;
 }
 
 function appIconPath() {
@@ -975,15 +986,8 @@ ipcMain.handle('diagnostics:status', () => {
 
 ipcMain.handle('diagnostics:start', async () => {
   await startStack();
-  // Asynchronously wait for backend health and auto-launch the provider
-  (async () => {
-    try {
-      await waitForUrl(HEALTH_URL, 90000);
-      await ensureProviderAutoLaunch();
-    } catch (e) {
-      log(`Failed to auto-launch provider from diagnostics: ${e.message}`);
-    }
-  })();
+  await waitForUrl(HEALTH_URL, 90000);
+  await ensureProviderAutoLaunch();
   return { ok: true };
 });
 

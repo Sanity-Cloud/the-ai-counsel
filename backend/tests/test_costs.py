@@ -484,6 +484,26 @@ def test_summarize_buffered_stages_ignores_malformed_stages():
     assert report["total_cost"] == 0.0
 
 
+def test_summarize_calls_marks_missing_usage_unavailable():
+    report = costs._summarize_calls([
+        {
+            "model": "notion2api:gpt-5.2",
+            "total_cost": None,
+            "cost_status": "unknown",
+        },
+        {
+            "model": "notion2api:grok-4.3",
+            "total_cost": None,
+            "cost_status": "unknown",
+        },
+    ])
+    assert report["has_unavailable_usage"] is True
+    assert report["total_tokens"] is None
+    assert report["input_tokens"] is None
+    assert report["output_tokens"] is None
+    assert report["usage_unavailable_calls"] == 2
+
+
 @pytest.mark.asyncio
 async def test_stage3_chairman_error_attaches_cost(monkeypatch):
     """R6: outer-except in stage3_synthesize_final must call attach_cost so

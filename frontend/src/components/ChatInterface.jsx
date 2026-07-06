@@ -21,6 +21,7 @@ import './ChatInterface.css';
 import { getShortModelName } from '../utils/modelHelpers';
 import { resolveRoundPresentation } from '../utils/roundState';
 import { shouldRenderAuditResults } from '../utils/auditResults';
+import { getCouncilRunLabel } from '../utils/auditRunLabel';
 
 function hasStage1Results(msg) {
     return Array.isArray(msg.stage1) && msg.stage1.length > 0;
@@ -303,20 +304,19 @@ export default function ChatInterface({
                                         || (isActiveMessage ? critiqueMode : 'freeform');
                                     const failedEmptyRun = msg.metadata?.debate_rounds_executed === 0
                                         && !msg.metadata?.rounds?.length;
-                                    let label;
-                                    if (failedEmptyRun) label = critique === 'audit' ? '⚠️ Audit Failed' : '⚠️ Run Failed';
-                                    else if (knownMode === 'chat_only') label = '💬 Chat Only';
-                                    else if (knownMode === 'chat_ranking') label = '⚖️ Chat + Ranking';
-                                    else if (knownMode === 'full') {
-                                        if (rounds > 1) {
-                                            const critiqueLabel = CRITIQUE_MODE_LABELS[critique] || critique;
-                                            label = `🏛️ Full Debate (${rounds} Rds • ${critiqueLabel})`;
-                                        } else {
-                                            label = '🏛️ Full Deliberation';
-                                        }
-                                    } else {
-                                        label = '🏛️ Deliberation';
-                                    }
+                                    const lastRound = msg.metadata?.rounds?.[msg.metadata.rounds.length - 1] || {};
+                                    const label = getCouncilRunLabel({
+                                        knownMode,
+                                        critique,
+                                        rounds,
+                                        failedEmptyRun,
+                                        pipelineError: msg.metadata?.pipeline_error || null,
+                                        convergenceStatus: msg.metadata?.convergence_status || null,
+                                        claimAuditStatus: lastRound.metadata?.claim_audit_status
+                                            || msg.metadata?.claim_audit_status
+                                            || null,
+                                        hasStage3: Boolean(lastRound.stage3?.response || msg.stage3?.response),
+                                    });
                                     return <span className="debate-mode-pill">{label}</span>;
                                 })()}
                             </div>
@@ -572,6 +572,13 @@ function CouncilMessageRenderer({
                 <div className="council-error">
                     <span className="council-error-icon">⚠️</span>
                     <span className="council-error-text">{pipelineErrorMessage}</span>
+                </div>
+            )}
+
+            {!msg.error && !pipelineErrorMessage && Array.isArray(displayMetadata.pipeline_warnings) && displayMetadata.pipeline_warnings.length > 0 && (
+                <div className="council-error council-error--warning">
+                    <span className="council-error-icon">⚠️</span>
+                    <span className="council-error-text">{displayMetadata.pipeline_warnings[0].message}</span>
                 </div>
             )}
 

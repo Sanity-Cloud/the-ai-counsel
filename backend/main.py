@@ -1140,6 +1140,8 @@ async def send_debate_message_stream(conversation_id: str, body: SendMessageRequ
         effective_audit_profile = body.audit_profile or settings.audit_profile or "general"
         debate_converged = False
         debate_error = None
+        debate_convergence_status = None
+        debate_warnings = None
         _register_run(conversation_id, body.execution_mode, critique_mode=effective_critique_mode, audit_profile=effective_audit_profile)
         try:
             validated_docs = validate_documents_for_request(body.documents)
@@ -1328,6 +1330,8 @@ async def send_debate_message_stream(conversation_id: str, body: SendMessageRequ
 
                 if event_type == "debate_complete":
                     debate_error = event.get("error") or debate_error
+                    debate_convergence_status = event.get("convergence_status")
+                    debate_warnings = event.get("warnings")
                     rounds_data = event.get("rounds", [])
                     cost_report = event.get("cost_report") or build_iterative_debate_cost_report(rounds_data, event.get("stage4"))
                     debate_converged = event.get("converged", False)
@@ -1360,10 +1364,13 @@ async def send_debate_message_stream(conversation_id: str, body: SendMessageRequ
                 "debate_rounds_configured": effective_rounds,
                 "debate_rounds_executed": len(rounds_data),
                 "converged": debate_converged,
+                "convergence_status": debate_convergence_status,
                 "auto_converge": settings.auto_converge,
                 "rounds": rounds_data,
                 "cost_report": cost_report or build_iterative_debate_cost_report(rounds_data, final_stage4),
             }
+            if debate_warnings:
+                metadata["pipeline_warnings"] = debate_warnings
             if debate_error:
                 metadata["pipeline_error"] = debate_error
             if debate_critique_mode == "audit":
@@ -1371,9 +1378,13 @@ async def send_debate_message_stream(conversation_id: str, body: SendMessageRequ
                 if rounds_data:
                     last_round = rounds_data[-1]
                     last_round_meta = last_round.get("metadata") or {}
+                    audit_status = "failed" if debate_error else (
+                        "partial" if debate_convergence_status == "partial" else "complete"
+                    )
+                    metadata["claim_audit_status"] = last_round_meta.get("claim_audit_status")
                     metadata["audit"] = {
                         "schema_version": 1,
-                        "status": "failed" if debate_error else "complete",
+                        "status": audit_status,
                         "stage2a": {
                             "evaluations": last_round.get("stage2a") or last_round_meta.get("stage2a_results") or [],
                             "ranking": final_aggregate_rankings.get("ranking", []) if isinstance(final_aggregate_rankings, dict) else []
@@ -1743,6 +1754,8 @@ async def ask_oneshot(body: AskRequest):
         rounds = debate_complete_data.get("rounds", [])
         cost_report = debate_complete_data.get("cost_report")
         pipeline_error = debate_complete_data.get("error")
+        convergence_status = debate_complete_data.get("convergence_status")
+        pipeline_warnings = debate_complete_data.get("warnings")
 
         stage1 = []
         stage2a_responses = []
@@ -1783,10 +1796,14 @@ async def ask_oneshot(body: AskRequest):
             "execution_mode": body.execution_mode,
             "critique_mode": "audit",
             "audit_profile": effective_audit_profile,
+            "convergence_status": convergence_status,
+            "claim_audit_status": last_meta.get("claim_audit_status") if rounds else None,
             "cost_report": cost_report,
             "audit": {
                 "schema_version": 1,
-                "status": "failed" if pipeline_error else "complete",
+                "status": "failed" if pipeline_error else (
+                    "partial" if convergence_status == "partial" else "complete"
+                ),
                 "stage2a": {
                     "evaluations": stage2a_responses,
                     "ranking": aggregate_rankings.get("ranking", []) if isinstance(aggregate_rankings, dict) else []
@@ -1806,6 +1823,8 @@ async def ask_oneshot(body: AskRequest):
             "label_to_model": label_to_model,
             "aggregate_rankings": aggregate_rankings,
         }
+        if pipeline_warnings:
+            metadata["pipeline_warnings"] = pipeline_warnings
         if pipeline_error:
             metadata["pipeline_error"] = pipeline_error
 

@@ -740,25 +740,32 @@ def _summarize_calls(calls: List[Dict[str, Any]]) -> Dict[str, Any]:
     unknown_cost_calls = 0
     estimated_calls = 0
     free_calls = 0
+    usage_available_calls = 0
+    usage_unavailable_calls = 0
     total_input = 0
     total_output = 0
     total_tokens = 0
     by_model: Dict[str, Dict[str, Any]] = {}
     by_stage: Dict[str, Dict[str, Any]] = {}
 
+    def call_has_usage(call: Dict[str, Any]) -> bool:
+        return any(isinstance(call.get(key), int) for key in ("input_tokens", "output_tokens", "total_tokens"))
+
     def ensure_bucket(target: Dict[str, Dict[str, Any]], key: str) -> Dict[str, Any]:
         if key not in target:
             target[key] = {
                 "name": key,
                 "calls": 0,
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "total_tokens": 0,
+                "input_tokens": None,
+                "output_tokens": None,
+                "total_tokens": None,
                 "total_cost": 0.0,
                 "known_cost_calls": 0,
                 "unknown_cost_calls": 0,
                 "estimated_calls": 0,
                 "free_calls": 0,
+                "usage_available_calls": 0,
+                "usage_unavailable_calls": 0,
                 "pricing_sources": [],
             }
         return target[key]
@@ -777,21 +784,37 @@ def _summarize_calls(calls: List[Dict[str, Any]]) -> Dict[str, Any]:
         if call.get("cost_status") == "free":
             free_calls += 1
 
-        input_tokens = call.get("input_tokens") if isinstance(call.get("input_tokens"), int) else 0
-        output_tokens = call.get("output_tokens") if isinstance(call.get("output_tokens"), int) else 0
-        tokens = call.get("total_tokens") if isinstance(call.get("total_tokens"), int) else (input_tokens + output_tokens)
-        total_input += input_tokens
-        total_output += output_tokens
-        total_tokens += tokens
+        has_usage = call_has_usage(call)
+        if has_usage:
+            usage_available_calls += 1
+            input_tokens = call.get("input_tokens") if isinstance(call.get("input_tokens"), int) else 0
+            output_tokens = call.get("output_tokens") if isinstance(call.get("output_tokens"), int) else 0
+            tokens = (
+                call.get("total_tokens")
+                if isinstance(call.get("total_tokens"), int)
+                else (input_tokens + output_tokens)
+            )
+            total_input += input_tokens
+            total_output += output_tokens
+            total_tokens += tokens
+        else:
+            usage_unavailable_calls += 1
+            input_tokens = None
+            output_tokens = None
+            tokens = None
 
         for bucket in (
             ensure_bucket(by_model, str(call.get("model") or "unknown")),
             ensure_bucket(by_stage, str(call.get("stage") or "unknown")),
         ):
             bucket["calls"] += 1
-            bucket["input_tokens"] += input_tokens
-            bucket["output_tokens"] += output_tokens
-            bucket["total_tokens"] += tokens
+            if has_usage:
+                bucket["usage_available_calls"] += 1
+                bucket["input_tokens"] = (bucket["input_tokens"] or 0) + (input_tokens or 0)
+                bucket["output_tokens"] = (bucket["output_tokens"] or 0) + (output_tokens or 0)
+                bucket["total_tokens"] = (bucket["total_tokens"] or 0) + (tokens or 0)
+            else:
+                bucket["usage_unavailable_calls"] += 1
             if has_cost:
                 bucket["total_cost"] += float(cost)
                 bucket["known_cost_calls"] += 1
@@ -807,19 +830,30 @@ def _summarize_calls(calls: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     def finish_bucket(bucket: Dict[str, Any]) -> Dict[str, Any]:
         bucket["total_cost"] = _round_money(bucket["total_cost"]) or 0.0
+        if bucket["usage_available_calls"] == 0:
+            bucket["input_tokens"] = None
+            bucket["output_tokens"] = None
+            bucket["total_tokens"] = None
         return bucket
+
+    summary_input = total_input if usage_available_calls > 0 else None
+    summary_output = total_output if usage_available_calls > 0 else None
+    summary_tokens = total_tokens if usage_available_calls > 0 else None
 
     return {
         "currency": "USD",
         "total_cost": _round_money(total_cost) or 0.0,
-        "input_tokens": total_input,
-        "output_tokens": total_output,
-        "total_tokens": total_tokens,
+        "input_tokens": summary_input,
+        "output_tokens": summary_output,
+        "total_tokens": summary_tokens,
         "total_calls": len(calls),
         "known_cost_calls": known_cost_calls,
         "unknown_cost_calls": unknown_cost_calls,
         "estimated_calls": estimated_calls,
         "free_calls": free_calls,
+        "usage_available_calls": usage_available_calls,
+        "usage_unavailable_calls": usage_unavailable_calls,
+        "has_unavailable_usage": usage_unavailable_calls > 0 and usage_available_calls == 0,
         "has_unknown_costs": unknown_cost_calls > 0,
         "has_estimates": estimated_calls > 0,
         "by_model": sorted(

@@ -184,6 +184,65 @@ async def test_notion2api_get_models_uses_canonical_metadata_and_deduplicates(fa
 
 
 @pytest.mark.asyncio
+async def test_get_models_returns_live_endpoint_models_only(fake_httpx, notion_env):
+    fake_httpx.responses.append((
+        200,
+        {"data": [
+            {"id": "almond-croissant-low", "canonical_id": "almond-croissant-low", "display_name": "Sonnet 4.6"},
+            {"id": "apricot-sorbet-high", "canonical_id": "apricot-sorbet-high", "display_name": "Opus 4.7"},
+        ]},
+        "",
+    ))
+
+    models = await Notion2APIProvider().get_models()
+    assert {m["id"] for m in models} == {
+        "notion2api:almond-croissant-low",
+        "notion2api:apricot-sorbet-high",
+    }
+    assert all("pinned" not in m for m in models)
+
+
+@pytest.mark.asyncio
+async def test_notion2api_query_model_not_found_400_produces_clear_error(fake_httpx, notion_env):
+    body = {
+        "error": {
+            "message": "Unsupported model 'angel-cake-high'.",
+            "type": "invalid_request_error",
+            "param": None,
+            "code": "model_not_found",
+        }
+    }
+    fake_httpx.responses.append((400, body, json.dumps(body)))
+
+    result = await Notion2APIProvider().query(
+        "notion2api:angel-cake-high",
+        [{"role": "user", "content": "hi"}],
+    )
+
+    assert result["error"] is True
+    assert result["error_message"] == (
+        "Model not found: notion2api:angel-cake-high is no longer available through the "
+        "Notion2API provider (HTTP 400 model_not_found). Update your council "
+        "configuration to a currently available model."
+    )
+
+
+@pytest.mark.asyncio
+async def test_notion2api_query_generic_400_falls_through_to_default_error(fake_httpx, notion_env):
+    body = {"error": {"message": "Bad request", "type": "invalid_request_error", "code": "bad_request"}}
+    fake_httpx.responses.append((400, body, json.dumps(body)))
+
+    result = await Notion2APIProvider().query(
+        "notion2api:gpt-5.2",
+        [{"role": "user", "content": "hi"}],
+    )
+
+    assert result["error"] is True
+    assert result["error_message"].startswith("Notion2API error: 400 - ")
+    assert "Model not found:" not in result["error_message"]
+
+
+@pytest.mark.asyncio
 async def test_notion2api_validate_connection_accepts_explicit_url_and_token(fake_httpx, monkeypatch):
     monkeypatch.delenv("NOTION2API_API_KEY", raising=False)
     fake_httpx.responses.append((200, {"data": [{"id": "model-a"}]}, ""))

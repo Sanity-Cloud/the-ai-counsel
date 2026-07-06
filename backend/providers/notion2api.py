@@ -183,6 +183,29 @@ class Notion2APIProvider(LLMProvider):
             NOTION2API_RETRY_BASE_DELAY * (2 ** max(attempt - 1, 0)),
         )
 
+    @staticmethod
+    def _format_http_error_message(
+        model_id: str,
+        status_code: int,
+        body_text: str,
+        *,
+        attempt_suffix: str = "",
+    ) -> str:
+        if status_code == 400:
+            try:
+                body = json.loads(body_text)
+            except Exception:
+                body = None
+            error = body.get("error") if isinstance(body, dict) else None
+            if isinstance(error, dict) and str(error.get("code", "")).lower() == "model_not_found":
+                return (
+                    f"Model not found: {model_id} is no longer available through the "
+                    f"Notion2API provider (HTTP 400 model_not_found). Update your council "
+                    "configuration to a currently available model."
+                )
+
+        return f"Notion2API error{attempt_suffix}: {status_code} - {body_text}"
+
     def _is_retryable_response(self, status_code: int, body_text: str) -> bool:
         lowered = (body_text or "").lower()
         retryable_terms = (
@@ -409,7 +432,12 @@ class Notion2APIProvider(LLMProvider):
                                 suffix = f" after {attempt} attempts"
                             return {
                                 "error": True,
-                                "error_message": f"Notion2API error{suffix}: {response.status_code} - {last_response_text}",
+                                "error_message": self._format_http_error_message(
+                                    model_id,
+                                    response.status_code,
+                                    last_response_text,
+                                    attempt_suffix=suffix,
+                                ),
                             }
 
                         seen_done = False
